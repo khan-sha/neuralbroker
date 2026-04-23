@@ -10,7 +10,6 @@ services:
     environment:
       - CONFIG_PATH=config.yaml
     volumes:
-      - ./leads.jsonl:/app/leads.jsonl
       - ./config.yaml:/app/config.yaml
     depends_on:
       - redis
