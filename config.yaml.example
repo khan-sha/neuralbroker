@@ -1,0 +1,162 @@
+local_nodes:
+  - name: "ollama-default"
+    runtime: "ollama"
+    host: "localhost:11434"
+    vram_threshold: 0.80
+    gpu_index: 0
+
+cloud_providers:
+  - name: "groq"
+    api_key_env: "GROQ_KEY"
+    base_url: "https://api.groq.com/openai/v1"
+    cost_per_1k_tokens: 0.00006
+
+  # ── OpenAI-compatible (Pattern A) ─────────────────────────────────────────
+
+  # - name: "openai"
+  #   api_key_env: "OPENAI_KEY"
+  #   base_url: "https://api.openai.com/v1"
+  #   cost_per_1k_tokens: 0.005
+
+  # - name: "together"
+  #   api_key_env: "TOGETHER_KEY"
+  #   base_url: "https://api.together.xyz/v1"
+  #   cost_per_1k_tokens: 0.0002
+
+  # - name: "cerebras"
+  #   api_key_env: "CEREBRAS_KEY"
+  #   base_url: "https://api.cerebras.ai/v1"
+  #   cost_per_1k_tokens: 0.0001
+
+  # - name: "deepinfra"
+  #   api_key_env: "DEEPINFRA_KEY"
+  #   base_url: "https://api.deepinfra.com/v1/openai"
+  #   cost_per_1k_tokens: 0.00014
+
+  # - name: "fireworks"
+  #   api_key_env: "FIREWORKS_KEY"
+  #   base_url: "https://api.fireworks.ai/inference/v1"
+  #   cost_per_1k_tokens: 0.0002
+
+  # - name: "lepton"
+  #   api_key_env: "LEPTON_KEY"
+  #   base_url: "https://api.lepton.ai/api/v1"
+  #   cost_per_1k_tokens: 0.00013
+
+  # - name: "novita"
+  #   api_key_env: "NOVITA_KEY"
+  #   base_url: "https://api.novita.ai/v3/openai"
+  #   cost_per_1k_tokens: 0.00012
+
+  # - name: "hyperbolic"
+  #   api_key_env: "HYPERBOLIC_KEY"
+  #   base_url: "https://api.hyperbolic.xyz/v1"
+  #   cost_per_1k_tokens: 0.00018
+
+  # - name: "mistral"
+  #   api_key_env: "MISTRAL_KEY"
+  #   base_url: "https://api.mistral.ai/v1"
+  #   cost_per_1k_tokens: 0.0004
+
+  # - name: "kimi"
+  #   api_key_env: "KIMI_KEY"
+  #   base_url: "https://api.moonshot.cn/v1"
+  #   cost_per_1k_tokens: 0.0003
+
+  # - name: "deepseek"
+  #   api_key_env: "DEEPSEEK_KEY"
+  #   base_url: "https://api.deepseek.com/v1"
+  #   cost_per_1k_tokens: 0.00014
+
+  # - name: "qwen"
+  #   api_key_env: "QWEN_KEY"
+  #   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  #   cost_per_1k_tokens: 0.0002
+
+  # - name: "yi"
+  #   api_key_env: "YI_KEY"
+  #   base_url: "https://api.01.ai/v1"
+  #   cost_per_1k_tokens: 0.0003
+
+  # - name: "baichuan"
+  #   api_key_env: "BAICHUAN_KEY"
+  #   base_url: "https://api.baichuan-ai.com/v1"
+  #   cost_per_1k_tokens: 0.0004
+
+  # - name: "zhipu"
+  #   api_key_env: "ZHIPU_KEY"
+  #   base_url: "https://open.bigmodel.cn/api/paas/v4"
+  #   cost_per_1k_tokens: 0.0003
+
+  # - name: "perplexity"
+  #   api_key_env: "PERPLEXITY_KEY"
+  #   base_url: "https://api.perplexity.ai"
+  #   cost_per_1k_tokens: 0.001
+
+  # - name: "ai21"
+  #   api_key_env: "AI21_KEY"
+  #   base_url: "https://api.ai21.com/studio/v1"
+  #   cost_per_1k_tokens: 0.0005
+
+  # - name: "octoai"
+  #   api_key_env: "OCTOAI_KEY"
+  #   base_url: "https://text.octoai.run/v1"
+  #   cost_per_1k_tokens: 0.0002
+
+  # - name: "openrouter"
+  #   api_key_env: "OPENROUTER_KEY"
+  #   base_url: "https://openrouter.ai/api/v1"
+  #   cost_per_1k_tokens: 0.001
+
+  # ── Non-OpenAI-compatible (Pattern B) ─────────────────────────────────────
+
+  # - name: "anthropic"
+  #   api_key_env: "ANTHROPIC_KEY"
+  #   base_url: "https://api.anthropic.com"
+  #   cost_per_1k_tokens: 0.003
+
+  # - name: "gemini"
+  #   api_key_env: "GEMINI_KEY"
+  #   base_url: "https://generativelanguage.googleapis.com"
+  #   cost_per_1k_tokens: 0.00075
+
+  # - name: "cohere"
+  #   api_key_env: "COHERE_KEY"
+  #   base_url: "https://api.cohere.com/v2"
+  #   cost_per_1k_tokens: 0.001
+
+  # - name: "replicate"
+  #   api_key_env: "REPLICATE_KEY"
+  #   base_url: "https://api.replicate.com"
+  #   cost_per_1k_tokens: 0.0014
+
+  # - name: "cloudflare"
+  #   api_key_env: "CLOUDFLARE_KEY"
+  #   base_url: "https://api.cloudflare.com"
+  #   cost_per_1k_tokens: 0.0001
+
+  # - name: "bedrock"
+  #   api_key_env: "AWS_ACCESS_KEY_ID"
+  #   base_url: ""
+  #   cost_per_1k_tokens: 0.003
+
+  # - name: "azure_openai"
+  #   api_key_env: "AZURE_OPENAI_KEY"
+  #   base_url: ""
+  #   cost_per_1k_tokens: 0.005
+
+  # - name: "vertex"
+  #   api_key_env: "GOOGLE_APPLICATION_CREDENTIALS"
+  #   base_url: ""
+  #   cost_per_1k_tokens: 0.00075
+
+routing:
+  default_mode: "cost"
+  vram_poll_interval_seconds: 0.5
+  electricity_kwh_price: 0.14
+  gpu_tdp_watts: 320
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  api_key_env: "NB_API_KEY"
