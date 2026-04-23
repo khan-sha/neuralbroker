@@ -2,7 +2,7 @@
 FastAPI application — NeuralBroker.
 
 VRAM-aware LLM routing proxy with OpenAI-compatible endpoints,
-lead capture, internal observability APIs, and Prometheus metrics.
+internal observability APIs, and Prometheus metrics.
 """
 import json
 import logging
