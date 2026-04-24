@@ -1,6 +1,11 @@
-fastapi
-uvicorn
-resend
-pydantic
-python-dotenv
-aiofiles
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+httpx>=0.27.0
+pyyaml>=6.0
+prometheus-client>=0.20.0
+resend>=0.7.0
+redis>=5.0.0
+nvidia-ml-py>=12.0.0
+psutil>=6.0.0
+click>=8.1.0
+beautifulsoup4>=4.12.0
