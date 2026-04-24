@@ -44,8 +44,9 @@ class SmartModelSelector:
             vram_needed = model.weight_gb + (model.kv_per_1k_gb * 4.0) if model.weight_gb > 0 else model.vram_gb
             headroom = self.available_vram_gb - vram_needed
             score += max(0, headroom * 2.5)
-            
-            is_moe = "a" in model.name and "-" in model.name
+
+            # MOE detection: check for known MOE patterns (e.g., "mixtral", "miqu")
+            is_moe = any(pattern in model.name.lower() for pattern in ["mixtral", "miqu", "moe"])
             if is_moe and "fast_response" in workload:
                 score += 15
                 

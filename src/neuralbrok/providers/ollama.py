@@ -17,13 +17,13 @@ from neuralbrok.providers.base import (
     BackendUnavailableError,
 )
 
-# Patterns that indicate an OOM in Ollama's response
+# Patterns that indicate an OOM in Ollama's response (all lowercase for case-insensitive matching)
 OOM_PATTERNS = [
-    "CUDA out of memory",
+    "cuda out of memory",
     "out of memory",
-    "OOM",
+    "oom",
     "device-side assert",
-    "cudaMalloc failed",
+    "cudamalloc failed",
 ]
 
 
@@ -83,13 +83,16 @@ class OllamaProvider(BaseProvider):
                                 continue
 
                             content = chunk.get("message", {}).get("content", "")
+                            done = chunk.get("done", False)
+
+                            # Skip empty thinking-phase chunks (qwen3 thinking model output)
+                            if not content and not done:
+                                continue
 
                             # Check for OOM in content
                             for pattern in OOM_PATTERNS:
                                 if pattern.lower() in content.lower():
                                     raise OOMError(self.name, content)
-
-                            done = chunk.get("done", False)
 
                             openai_chunk = {
                                 "id": chunk_id,

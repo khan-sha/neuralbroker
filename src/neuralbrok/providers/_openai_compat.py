@@ -5,6 +5,7 @@ Shared base for Groq, Together, OpenAI, and any other provider that speaks
 the OpenAI /v1/chat/completions wire format natively.
 """
 import json
+import logging
 import time
 from typing import AsyncIterator
 
@@ -16,6 +17,8 @@ from neuralbrok.providers.base import (
     RateLimitError,
     BackendUnavailableError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleProvider(BaseProvider):
@@ -107,5 +110,9 @@ class OpenAICompatibleProvider(BaseProvider):
                     headers={"Authorization": f"Bearer {self.api_key}"},
                 )
                 return r.status_code == 200
-        except Exception:
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.debug(f"Health check failed for {self.name}: {type(e).__name__}")
+            return False
+        except Exception as e:
+            logger.debug(f"Health check failed for {self.name}: {e}")
             return False

@@ -271,7 +271,7 @@ class PolicyEngine:
             if circuit.failed:
                 # Check if recovery period has elapsed
                 if (circuit.failed_at and
-                        datetime.now(timezone.utc) - circuit.failed_at
+                        datetime.now(timezone.utc) - (circuit.failed_at if circuit.failed_at.tzinfo else circuit.failed_at.replace(tzinfo=timezone.utc))
                         > timedelta(seconds=circuit.recovery_seconds)):
                     circuit.failed = False
                     circuit.consecutive_errors = 0
@@ -299,7 +299,19 @@ class PolicyEngine:
         scored.sort(key=lambda s: s.score, reverse=True)
 
         # Pick winner and build fallback chain
-        winner = scored[0] if scored else None
+        if not scored:
+            logger.error("No providers available after scoring (should have forced recovery)")
+            return RouteDecision(
+                backend_chosen="",
+                fallback_chain=[],
+                vram_at_decision=vram,
+                policy_mode=self.mode,
+                latency_ms=(time.perf_counter() - start) * 1000,
+                reason="no_providers",
+                timestamp=datetime.now(timezone.utc),
+            )
+
+        winner = scored[0]
         fallback_chain = [s.name for s in scored[1:] if not s.failed]
 
         reason = self._explain_decision(winner, vram_util)
