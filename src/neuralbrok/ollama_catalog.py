@@ -286,6 +286,8 @@ def assess_hardware(vram_gb: float, bandwidth_gbps: Optional[float] = None) -> d
     Assess whether hardware is suitable for local LLM inference.
     Returns a structured assessment with tier, message and recommendations.
     """
+    is_low_bandwidth = bandwidth_gbps is not None and bandwidth_gbps < 150.0
+
     if vram_gb == 0:
         # CPU only
         return {
@@ -309,7 +311,7 @@ def assess_hardware(vram_gb: float, bandwidth_gbps: Optional[float] = None) -> d
         # Estimate speed if bandwidth known
         if bandwidth_gbps:
             est_tps_7b = bandwidth_gbps / (5.0 + 1.0)  # ~5GB Q4 7B model
-            speed_note = f"~{est_tps_7b:.0f} tok/s estimated for a 7B Q4 model on your GPU"
+            speed_note = f"~{est_tps_7b:.0f} tok/s estimated for a 7B Q4 model on your hardware"
         else:
             speed_note = "Good speed for models up to ~6B, slower for 7B+ models"
 
@@ -324,33 +326,44 @@ def assess_hardware(vram_gb: float, bandwidth_gbps: Optional[float] = None) -> d
     elif vram_gb < 12:
         if bandwidth_gbps:
             est_tps_7b = bandwidth_gbps / (5.0 + 1.0)
-            speed_note = f"~{est_tps_7b:.0f} tok/s for a 7B Q4 model — snappy"
+            speed_note = f"~{est_tps_7b:.0f} tok/s for a 7B Q4 model" + (" — snappy" if est_tps_7b > 15 else " — playable but slow")
         else:
             speed_note = "Great speed for 7B–8B models, capable for 14B with quantization"
 
         return {
             "tier": "mid",
             "suitable_for_local": True,
-            "message": f"With {vram_gb:.1f}GB VRAM, you can run 7B–8B models comfortably and some 14B quantized models.",
-            "max_comfortable_model_gb": vram_gb - 0.8,
-            "suggest_cloud": False,
+            "message": f"With {vram_gb:.1f}GB VRAM, you can run 7B–8B models comfortably.",
+            "max_comfortable_model_gb": (vram_gb - 0.8) if not is_low_bandwidth else 8.0,
+            "suggest_cloud": is_low_bandwidth,
             "speed_note": speed_note,
         }
     elif vram_gb < 24:
+        speed_note = "Excellent local inference speed. Cloud mostly for spillover."
+        if bandwidth_gbps:
+            est_tps_14b = bandwidth_gbps / (10.0 + 1.0)
+            speed_note = f"~{est_tps_14b:.0f} tok/s estimated for a 14B model"
+
         return {
             "tier": "good",
             "suitable_for_local": True,
-            "message": f"With {vram_gb:.1f}GB VRAM, you can run 13B–20B models smoothly. Very capable local setup.",
-            "max_comfortable_model_gb": vram_gb - 1.0,
+            "message": f"With {vram_gb:.1f}GB VRAM, you can run 13B–20B models. Very capable local setup.",
+            "max_comfortable_model_gb": (vram_gb - 1.0) if not is_low_bandwidth else 10.0,
             "suggest_cloud": False,
-            "speed_note": "Excellent local inference speed. Cloud mostly for spillover.",
+            "speed_note": speed_note,
         }
     else:
+        speed_note = "Exceptional local speed. You're set."
+        if bandwidth_gbps:
+            est_tps_32b = bandwidth_gbps / (22.0 + 1.0)
+            speed_note = f"~{est_tps_32b:.0f} tok/s estimated for a 32B model"
+
         return {
             "tier": "excellent",
             "suitable_for_local": True,
             "message": f"With {vram_gb:.1f}GB VRAM, you can run 30B–70B models. Near-frontier local quality.",
-            "max_comfortable_model_gb": vram_gb - 1.5,
+            "max_comfortable_model_gb": (vram_gb - 1.5) if not is_low_bandwidth else 12.0,
             "suggest_cloud": False,
-            "speed_note": "Exceptional local speed. You're set.",
+            "speed_note": speed_note,
         }
+
