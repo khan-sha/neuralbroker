@@ -290,7 +290,7 @@ def setup():
     )
     import asyncio
 
-    device_key = profile.gpu_model if profile.gpu_vendor != "none" else profile.platform
+    device_key = profile.gpu_model # Use the detected model (CPU or GPU) as the primary key
 
     # ── Live catalog fetch ─────────────────────────────────────────────────
     sys.stdout.write(f"  {PINK}◐{RESET}  Fetching latest models from ollama.com...\r")
@@ -401,7 +401,7 @@ def setup():
         total_vram = profile.vram_gb if profile.vram_gb > 0 else 8.0
         for i, m in enumerate(runnable):
             ev = m.vram_estimated_gb if m.vram_estimated_gb > 0 else m.vram_gb
-            tps = get_tok_per_sec(m, device_key)
+            tps = get_tok_per_sec(m, device_key, bandwidth=bw)
             inst = f"{MATRIX}●{RESET}" if m.is_installed else f"{DIM}○{RESET}"
             bar = _get_vram_bar(ev, total_vram, width=10)
             caps = ",".join(m.capabilities[:3])
@@ -445,13 +445,7 @@ def setup():
         for i, model in enumerate(ranked_models[:4]):
             ev = model.vram_estimated_gb if model.vram_estimated_gb > 0 else model.vram_gb
             bar = _get_vram_bar(ev, total_vram, width=10)
-            # Use bandwidth-based estimate if available
-            bw = getattr(profile, "bandwidth_gbps", None)
-            if bw:
-                weight = model.weight_gb if model.weight_gb > 0 else model.vram_gb
-                tps = bw / (weight + 1.0)
-            else:
-                tps = get_tok_per_sec(model, device_key)
+            tps = get_tok_per_sec(model, device_key, bandwidth=bw)
             score = getattr(model, "_temp_score", None)
             compat_str = _compat_bar(score, width=6) if score is not None else f"{DIM}N/A{RESET}"
             inst_dot = f"{MATRIX}●{RESET}" if model.is_installed else f"{DIM}○{RESET}"
@@ -890,7 +884,7 @@ def start(port, host, config, mode=None):
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}    {MAGENTA}{BOLD}NEURAL{RESET}{PINK}{BOLD}BROKER{RESET}                                          {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}           {DIM}║{RESET}")
-    print(f"  {DIM}║{RESET}    {DIM}v0.5.0  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}v0.5.2  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     print(f"  {DIM}╚{W}╝{RESET}")
     print()
@@ -1360,7 +1354,7 @@ def models_cmd(workload, cloud, trending):
 
     profile = detect_device()
     bw = getattr(profile, "bandwidth_gbps", None)
-    device_key = profile.gpu_model if profile.gpu_vendor != "none" else profile.platform
+    device_key = profile.gpu_model # Use the detected model (CPU or GPU) as the primary key
 
     vram_str = f"{profile.vram_gb:.1f}GB VRAM" if profile.vram_gb > 0 else "CPU-only"
     bw_str = f"  {DIM}·  {bw:.0f} GB/s bandwidth{RESET}" if bw else ""
@@ -1418,11 +1412,7 @@ def models_cmd(workload, cloud, trending):
                 bar = _get_vram_bar(ev, total_vram, width=8)
 
                 # Bandwidth-based speed estimate (whatmodels formula)
-                if bw:
-                    weight = m.weight_gb if m.weight_gb > 0 else m.vram_gb
-                    tps = bw / (weight + 1.0)
-                else:
-                    tps = get_tok_per_sec(m, device_key)
+                tps = get_tok_per_sec(m, device_key, bandwidth=bw)
 
                 inst = f"{MATRIX}● installed{RESET}" if m.is_installed else f"{DIM}○ not pulled{RESET}"
                 caps = ",".join(m.capabilities[:3])
@@ -1440,11 +1430,7 @@ def models_cmd(workload, cloud, trending):
             sel = SmartModelSelector(device_key, profile.vram_gb, runnable)
             best = sel.best_single(workload_list)
             if best:
-                if bw:
-                    weight = best.weight_gb if best.weight_gb > 0 else best.vram_gb
-                    tps = bw / (weight + 1.0)
-                else:
-                    tps = get_tok_per_sec(best, device_key)
+                tps = get_tok_per_sec(best, device_key, bandwidth=bw)
                 print(
                     f"\n  {PINK}★  Best for [{workload}]:{RESET}  "
                     f"{MATRIX}{best.name}{RESET}  "

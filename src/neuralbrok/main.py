@@ -954,18 +954,18 @@ DASHBOARD_HTML = r'''<!doctype html>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0e0d0b;
-    --bg-2: #16140f;
-    --bg-3: #1c1a14;
-    --line: #2a2620;
-    --ink: #f4efe4;
-    --ink-2: #c8c1b0;
-    --ink-3: #8a8374;
-    --ink-4: #58534a;
-    --accent: oklch(0.78 0.14 65);
-    --ok: oklch(0.78 0.13 150);
-    --hot: oklch(0.65 0.20 28);
-    --cool: oklch(0.82 0.09 210);
+    --bg: #0a0a0a;
+    --bg-2: #121212;
+    --bg-3: #1a1a1a;
+    --line: #222222;
+    --ink: #ffffff;
+    --ink-2: #e0e0e0;
+    --ink-3: #999999;
+    --ink-4: #444444;
+    --accent: #ff87ff; /* CLI Pink */
+    --ok: #5fff00;    /* Matrix Green */
+    --hot: #ff5555;
+    --cool: #00ffff;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -1125,8 +1125,8 @@ DASHBOARD_HTML = r'''<!doctype html>
     font-size: 11px; color: var(--ink-2);
     margin-bottom: 16px;
   }
-  .hw-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
-  .hw-tier { color: var(--accent); font-weight: 600; }
+  .hw-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .hw-tier { color: var(--accent); font-weight: 600; text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent); }
 
   @media (max-width: 1200px) {
     .grid { grid-template-columns: 280px 1fr; }
@@ -1248,9 +1248,9 @@ DASHBOARD_HTML = r'''<!doctype html>
     gaugePct.textContent = pct + '%';
 
     // Color based on utilization
-    if (util > 0.9) gaugeArc.style.stroke = 'oklch(0.65 0.20 28)'; // hot
-    else if (util > 0.7) gaugeArc.style.stroke = 'oklch(0.78 0.14 65)'; // accent
-    else gaugeArc.style.stroke = 'oklch(0.78 0.13 150)'; // ok/green
+    if (util > 0.9) gaugeArc.style.stroke = 'var(--hot)';
+    else if (util > 0.7) gaugeArc.style.stroke = 'var(--accent)';
+    else gaugeArc.style.stroke = 'var(--ok)';
   }
 
   // ── Fetch VRAM ──
@@ -1376,7 +1376,7 @@ DASHBOARD_HTML = r'''<!doctype html>
     }
 
     // Local line (accent)
-    ctx.strokeStyle = '#d4a046';
+    ctx.strokeStyle = '#ff87ff';
     ctx.lineWidth = 2;
     ctx.beginPath();
     for (var i = 0; i < chartLocal.length; i++) {
@@ -1386,7 +1386,7 @@ DASHBOARD_HTML = r'''<!doctype html>
     ctx.stroke();
 
     // Cloud line (cool)
-    ctx.strokeStyle = '#7cb8c4';
+    ctx.strokeStyle = '#00ffff';
     ctx.lineWidth = 2;
     ctx.beginPath();
     for (var j = 0; j < chartCloud.length; j++) {
