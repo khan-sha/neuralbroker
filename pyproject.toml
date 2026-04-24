@@ -7,7 +7,6 @@ name = "neuralbrok"
 version = "0.5.3"
 description = "VRAM-aware LLM routing daemon — local-first, OpenAI-compatible"
 readme = "README.md"
-license = { file = "LICENSE" }
 requires-python = ">=3.10"
 keywords = ["llm", "routing", "ollama", "vram", "local-ai", "openai-compatible"]
 classifiers = [
@@ -52,3 +51,11 @@ Documentation = "https://github.com/khan-sha/neuralbroker#readme"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/neuralbrok"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/README.md",
+    "/pyproject.toml",
+    "/config.yaml",
+]
