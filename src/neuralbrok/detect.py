@@ -147,30 +147,45 @@ def detect_device() -> DeviceProfile:
     # 3. Check AMD via rocm-smi
     try:
         if plat == "linux":
-            vram_str = subprocess.run(["rocm-smi", "--showmeminfo", "vram"], capture_output=True, text=True, check=True).stdout
-            if "vram" in vram_str.lower():
-                # Rough detection
-                # In reality, parsing rocm-smi might be complex, we'll assign a placeholder or parse if possible
-                gpu_name = "AMD Radeon GPU (ROCm)"
-                vram_gb = 16.0  # Safe default if parsing fails, but ideally parse `vram_str`
-                
-                tdp = _get_amd_tdp(gpu_name)
-                models, threshold = _get_nvidia_recommendations(vram_gb)
-                
-                return DeviceProfile(
-                    gpu_vendor="amd",
-                    gpu_model=gpu_name,
-                    vram_gb=vram_gb,
-                    ram_gb=ram_gb,
-                    cpu_cores=cpu_cores,
-                    platform=plat,
-                    cuda_version=None,
-                    metal_support=False,
-                    recommended_runtime="llama_cpp",
-                    recommended_models=models,
-                    recommended_vram_threshold=threshold,
-                    estimated_electricity_tdp_watts=tdp
-                )
+            # Try to get detailed GPU info
+            try:
+                gpu_info = subprocess.run(["rocm-smi", "--json"], capture_output=True, text=True, check=True).stdout
+                import json
+                data = json.loads(gpu_info)
+                if data and isinstance(data, list) and len(data) > 0:
+                    gpu_data = data[0]
+                    gpu_name = gpu_data.get("Product Name", "AMD Radeon GPU")
+                    vram_gb = float(gpu_data.get("Max Clock", 0)) / 1000.0 if "VRAM" in gpu_data else 16.0
+                else:
+                    gpu_name = "AMD Radeon GPU (ROCm)"
+                    vram_gb = 16.0
+            except:
+                # Fallback: try rocm-smi --showid
+                try:
+                    dev_list = subprocess.run(["rocm-smi", "--showid"], capture_output=True, text=True, check=True).stdout
+                    gpu_name = "AMD Radeon GPU" if dev_list and "GPU" in dev_list else "AMD GPU (ROCm)"
+                    vram_gb = 16.0  # Safe default
+                except:
+                    gpu_name = "AMD Radeon GPU (ROCm)"
+                    vram_gb = 16.0
+
+            tdp = _get_amd_tdp(gpu_name)
+            models, threshold = _get_nvidia_recommendations(vram_gb)
+
+            return DeviceProfile(
+                gpu_vendor="amd",
+                gpu_model=gpu_name,
+                vram_gb=vram_gb,
+                ram_gb=ram_gb,
+                cpu_cores=cpu_cores,
+                platform=plat,
+                cuda_version=None,
+                metal_support=False,
+                recommended_runtime="llama_cpp",
+                recommended_models=models,
+                recommended_vram_threshold=threshold,
+                estimated_electricity_tdp_watts=tdp
+            )
     except Exception:
         pass
 

@@ -4,13 +4,16 @@ Polls GPU memory every 500ms, caches latest snapshot for <1ms access on request 
 """
 import asyncio
 import logging
+import warnings
 from datetime import datetime
 from typing import Optional
 
 from neuralbrok.types import VramSnapshot
 
 try:
-    import pynvml
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*deprecated.*")
+        import pynvml
     HAS_PYNVML = True
 except ImportError:
     HAS_PYNVML = False
