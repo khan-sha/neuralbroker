@@ -82,18 +82,25 @@ def setup():
     sys.stdout.write(CLEAR)
     sys.stdout.flush()
     
-    # Step 0 - Pink Matrix splash
+    # Step 0 - Pink Matrix splash (58-char content between ║)
     W = "═" * 58
     print(f"  {DIM}╔{W}╗{RESET}")
+    # binary header (2sp + 54chars + 2sp = 58)
     print(f"  {DIM}║{RESET}  {DIM}01101110 01100101 01110101 01110010 01100001 01101100{RESET}  {DIM}║{RESET}")
+    # blank (58 spaces)
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
+    # title (4sp + NEURAL + BROKER + 42sp = 58)
     _print_typewriter(
         f"  {DIM}║{RESET}    {MAGENTA}{BOLD}NEURAL{RESET}{PINK}{BOLD}BROKER{RESET}                                          {DIM}║{RESET}",
         delay=0.004,
     )
+    # tagline (4sp + 44chars + 10sp = 58)
     print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}           {DIM}║{RESET}")
-    print(f"  {DIM}║{RESET}    {DIM}v0.4.1  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
+    # version (4sp + 54chars = 58, no trailing)
+    print(f"  {DIM}║{RESET}    {DIM}v0.4.1  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}      {DIM}║{RESET}")
+    # blank (58 spaces)
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
+    # hint (4sp + 27chars + 27sp = 58)
     print(f"  {DIM}║{RESET}    {DIM}Ctrl+C at any time to exit{RESET}                             {DIM}║{RESET}")
     print(f"  {DIM}╚{W}╝{RESET}")
     
