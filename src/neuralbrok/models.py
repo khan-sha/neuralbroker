@@ -79,44 +79,109 @@ async def validate_models(host: str = "localhost:11434") -> Dict[str, bool]:
         return {}
 
 MODELS = [
-    # Qwen3 family
-    ModelProfile("qwen3:0.6b",   "qwen3",    0.6,  "q4_K_M", 0.8,  2,   32,  {"rtx3060": 150, "rtx3070": 180, "rtx3080": 220, "rtx3090": 250, "rtx4060": 180, "rtx4070": 220, "rtx4080": 280, "rtx4090": 350, "m1": 100, "m1pro": 120, "m1max": 140, "m2": 120, "m2pro": 140, "m2max": 160, "m3": 140, "m3pro": 160, "m3max": 180, "m4": 160, "m4pro": 180, "m4max": 200, "rx6800xt": 180, "rx7900xtx": 250, "cpu": 12.0}, 12.0, ["chat","tools","code","reasoning"], ["chat","coding"], "qwen3:0.6b", "Smallest usable model — fits any hardware"),
-    ModelProfile("qwen3:1.7b",   "qwen3",    1.7,  "q4_K_M", 1.5,  4,   32,  {"rtx3060": 90, "rtx3070": 110, "rtx3080": 140, "rtx3090": 160, "rtx4060": 110, "rtx4070": 140, "rtx4080": 180, "rtx4090": 220, "m1": 60, "m2": 75, "m3": 90, "rx6800xt": 110, "cpu": 8.0}, 8.0,  ["chat","tools","code","reasoning"], ["chat","coding"], "qwen3:1.7b", "Good quality for <2GB VRAM"),
-    ModelProfile("qwen3:4b",     "qwen3",    4.0,  "q4_K_M", 3.0,  6,   32,  {"rtx3060": 55, "rtx3070": 65, "rtx3080": 85, "rtx3090": 100, "rtx4060": 65, "rtx4070": 85, "rtx4080": 110, "rtx4090": 140, "m1": 35, "m2": 45, "m3": 55, "rx6800xt": 65, "cpu": 5.0}, 5.0,  ["chat","tools","code","reasoning"], ["chat","coding","agentic"], "qwen3:4b", "Best quality under 4GB VRAM"),
-    ModelProfile("qwen3:8b",     "qwen3",    8.0,  "q4_K_M", 5.5,  8,   128, {"rtx3060": 28, "rtx3070": 35, "rtx3080": 42, "rtx3090": 50, "rtx4060": 35, "rtx4070": 45, "rtx4080": 60, "rtx4090": 80, "m1": 20, "m1pro": 25, "m1max": 35, "m2": 25, "m2pro": 30, "m2max": 40, "m3": 30, "m3pro": 35, "m3max": 45, "m4": 35, "m4pro": 40, "m4max": 50, "rx6800xt": 35, "rx7900xtx": 55, "cpu": 3.0}, 3.0,  ["chat","tools","code","reasoning","multilingual"], ["chat","coding","agentic","rag"], "qwen3:8b", "Best all-rounder for 6-8GB VRAM", weight_gb=4.92, kv_per_1k_gb=0.122, layers=32),
-    ModelProfile("qwen3:14b",    "qwen3",    14.0, "q4_K_M", 9.0,  16,  128, {"rtx3060": 15, "rtx3070": 20, "rtx3080": 25, "rtx3090": 32, "rtx4060": 20, "rtx4070": 26, "rtx4080": 35, "rtx4090": 48, "m1max": 20, "m2max": 24, "m3max": 28, "m4max": 32, "rx6800xt": 20, "rx7900xtx": 35, "cpu": 1.5}, 1.5,  ["chat","tools","code","reasoning","multilingual"], ["chat","coding","agentic","rag","math"], "qwen3:14b", "Strong reasoning for 10-12GB VRAM"),
-    ModelProfile("qwen3:32b",    "qwen3",    32.0, "q4_K_M", 20.0, 32,  128, {"rtx3090": 15, "rtx4080": 16, "rtx4090": 22, "m2max": 10, "m3max": 12, "m4max": 14, "rx7900xtx": 16, "cpu": 0.5}, 0.5,  ["chat","tools","code","reasoning","multilingual"], ["chat","coding","agentic","math"], "qwen3:32b", "Near-frontier quality for 24GB VRAM"),
-    ModelProfile("qwen3:30b-a3b","qwen3",    30.0, "q4_K_M", 4.0,  8,   128, {"rtx3060": 35, "rtx3070": 42, "rtx3080": 55, "rtx3090": 65, "rtx4060": 42, "rtx4070": 55, "rtx4080": 75, "rtx4090": 95, "m1max": 30, "m2max": 35, "m3max": 40, "m4max": 45, "rx6800xt": 42, "rx7900xtx": 65, "cpu": 2.0}, 2.0,  ["chat","tools","code","reasoning"], ["chat","coding","agentic"], "qwen3:30b-a3b", "MoE — frontier quality at 4GB active VRAM"),
-    ModelProfile("qwen3:235b-a22b","qwen3",  235.0,"q4_K_M", 28.0, 64,  128, {"rtx3090": 8, "rtx4090": 12, "m2max": 4, "m3max": 5, "m4max": 6, "rx7900xtx": 9, "cpu": 0.1}, 0.1,  ["chat","tools","code","reasoning","multilingual"], ["chat","coding","math"], "qwen3:235b-a22b", "MoE — best open model, needs 24GB+ VRAM"),
-
-    # Llama 4 family
-    ModelProfile("llama4:scout", "llama4",   17.0, "q4_K_M", 8.0,  16,  128, {"rtx3060": 18, "rtx3070": 22, "rtx3080": 28, "rtx3090": 35, "rtx4060": 22, "rtx4070": 28, "rtx4080": 38, "rtx4090": 52, "m1max": 22, "m2max": 26, "m3max": 30, "m4max": 34, "rx6800xt": 22, "rx7900xtx": 38, "cpu": 2.0}, 2.0,  ["chat","tools","vision","code"], ["chat","coding","vision","agentic"], "llama4:scout", "Best vision+tools combo for 8-10GB VRAM"),
-    ModelProfile("llama4:maverick","llama4", 17.0, "q4_K_M", 12.0, 24,  128, {"rtx3060": 16, "rtx3070": 20, "rtx3080": 25, "rtx3090": 32, "rtx4060": 20, "rtx4070": 25, "rtx4080": 35, "rtx4090": 48, "m1max": 20, "m2max": 24, "m3max": 28, "m4max": 32, "rx6800xt": 20, "rx7900xtx": 35, "cpu": 1.5}, 1.5,  ["chat","tools","vision","code"], ["chat","coding","vision","agentic"], "llama4:maverick", "Higher quality Llama 4 for 12-16GB VRAM"),
-
-    # DeepSeek family
-    ModelProfile("deepseek-r1:7b",  "deepseek", 7.0,  "q4_K_M", 5.0,  8,  64, {"rtx3060": 30, "rtx3070": 38, "rtx3080": 45, "rtx3090": 55, "rtx4060": 38, "rtx4070": 48, "rtx4080": 65, "rtx4090": 85, "m1max": 30, "m2max": 35, "m3max": 40, "m4max": 45, "rx6800xt": 38, "rx7900xtx": 60, "cpu": 3.0}, 3.0, ["chat","reasoning","code","math"], ["math","coding","reasoning"], "deepseek-r1:7b", "Best reasoning for 6GB VRAM"),
-    ModelProfile("deepseek-r1:14b", "deepseek", 14.0, "q4_K_M", 9.0,  16, 64, {"rtx3060": 16, "rtx3070": 20, "rtx3080": 26, "rtx3090": 33, "rtx4060": 20, "rtx4070": 27, "rtx4080": 36, "rtx4090": 50, "m1max": 20, "m2max": 25, "m3max": 29, "m4max": 34, "rx6800xt": 20, "rx7900xtx": 36, "cpu": 1.5}, 1.5, ["chat","reasoning","code","math"], ["math","coding","reasoning"], "deepseek-r1:14b", "Strong math and code for 10-12GB VRAM"),
-    ModelProfile("deepseek-r1:32b", "deepseek", 32.0, "q4_K_M", 20.0, 32, 64, {"rtx3090": 15, "rtx4080": 16, "rtx4090": 22, "m2max": 10, "m3max": 12, "m4max": 14, "rx7900xtx": 16, "cpu": 0.5}, 0.5, ["chat","reasoning","code","math"], ["math","coding","reasoning"], "deepseek-r1:32b", "Near-frontier reasoning for 24GB VRAM"),
-    ModelProfile("deepseek-coder-v2:16b","deepseek",16.0,"q4_K_M",10.0,16,128,{"rtx3060": 14, "rtx3070": 18, "rtx3080": 23, "rtx3090": 30, "rtx4060": 18, "rtx4070": 24, "rtx4080": 32, "rtx4090": 45, "m1max": 18, "m2max": 22, "m3max": 26, "m4max": 30, "rx6800xt": 18, "rx7900xtx": 32, "cpu": 1.2}, 1.2, ["chat","code","tools"],            ["coding","agentic"],           "deepseek-coder-v2:16b", "Best dedicated coder for 10-12GB VRAM"),
-
-    # Mistral family
-    ModelProfile("mistral:7b",      "mistral",  7.0,  "q4_K_M", 5.0,  8,  32, {"rtx3060": 32, "rtx3070": 40, "rtx3080": 48, "rtx3090": 58, "rtx4060": 40, "rtx4070": 50, "rtx4080": 68, "rtx4090": 90, "m1max": 32, "m2max": 38, "m3max": 44, "m4max": 50, "rx6800xt": 40, "rx7900xtx": 65, "cpu": 3.0}, 3.0, ["chat","tools","code"],            ["chat","rag"],                 "mistral:7b", "Fast and reliable general chat"),
-    ModelProfile("mistral-small:22b","mistral", 22.0, "q4_K_M", 14.0, 24, 32, {"rtx3080": 16, "rtx3090": 22, "rtx4070": 18, "rtx4080": 24, "rtx4090": 32, "m2max": 14, "m3max": 16, "m4max": 18, "rx7900xtx": 24, "cpu": 1.0}, 1.0, ["chat","tools","code"],            ["chat","rag","coding"],        "mistral-small:22b", "Strong instruction following for 16GB VRAM"),
-
-    # Phi-4 family
-    ModelProfile("phi4:14b",     "phi4",     14.0, "q4_K_M", 9.0,  16, 16, {"rtx3060": 16, "rtx3070": 20, "rtx3080": 26, "rtx3090": 33, "rtx4060": 20, "rtx4070": 27, "rtx4080": 36, "rtx4090": 50, "m1max": 20, "m2max": 25, "m3max": 29, "m4max": 34, "rx6800xt": 20, "rx7900xtx": 36, "cpu": 1.5}, 1.5,  ["chat","code","reasoning","math"],  ["coding","math","reasoning"],  "phi4:14b", "Microsoft — exceptional at math and code for size"),
-    ModelProfile("phi4-mini:3.8b","phi4",    3.8,  "q4_K_M", 3.0,  6,  16, {"rtx3060": 60, "rtx3070": 72, "rtx3080": 90, "rtx3090": 110, "rtx4060": 72, "rtx4070": 92, "rtx4080": 120, "rtx4090": 150, "m1max": 45, "m2max": 55, "m3max": 65, "m4max": 75, "rx6800xt": 72, "rx7900xtx": 110, "cpu": 4.0}, 4.0,  ["chat","code","reasoning"],         ["coding","chat"],              "phi4-mini:3.8b", "Strong coder under 4GB VRAM"),
-
-    # Gemma 3 family
-    ModelProfile("gemma3:4b",    "gemma3",   4.0,  "q4_K_M", 3.0,  6,  128, {"rtx3060": 58, "rtx3070": 68, "rtx3080": 88, "rtx3090": 105, "rtx4060": 68, "rtx4070": 88, "rtx4080": 115, "rtx4090": 145, "m1max": 40, "m2max": 50, "m3max": 60, "m4max": 70, "rx6800xt": 68, "rx7900xtx": 105, "cpu": 5.0}, 5.0, ["chat","vision","tools"],           ["chat","vision"],              "gemma3:4b", "Google — vision capable under 4GB VRAM"),
-    ModelProfile("gemma3:12b",   "gemma3",   12.0, "q4_K_M", 8.0,  16, 128, {"rtx3060": 18, "rtx3070": 24, "rtx3080": 30, "rtx3090": 38, "rtx4060": 24, "rtx4070": 30, "rtx4080": 42, "rtx4090": 55, "m1max": 24, "m2max": 28, "m3max": 34, "m4max": 40, "rx6800xt": 24, "rx7900xtx": 42, "cpu": 2.0}, 2.0, ["chat","vision","tools"],           ["chat","vision","rag"],        "gemma3:12b", "Good vision and chat for 8-10GB VRAM"),
-    ModelProfile("gemma3:27b",   "gemma3",   27.0, "q4_K_M", 18.0, 32, 128, {"rtx3090": 18, "rtx4080": 18, "rtx4090": 25, "m2max": 12, "m3max": 14, "m4max": 16, "rx7900xtx": 18, "cpu": 0.8}, 0.8, ["chat","vision","tools"],           ["chat","vision"],              "gemma3:27b", "Best Gemma quality for 20GB+ VRAM"),
-
-    # Nomic embedding
-    ModelProfile("nomic-embed-text:v1.5","nomic",0.137,"f16",0.3,2,8, {"rtx3060": 800, "rtx3070": 900, "rtx3080": 1100, "rtx3090": 1300, "rtx4060": 900, "rtx4070": 1100, "rtx4080": 1400, "rtx4090": 1800, "m1max": 600, "m2max": 700, "m3max": 800, "m4max": 900, "rx6800xt": 900, "rx7900xtx": 1400, "cpu": 50.0}, 50.0, ["embedding"],                              ["rag","embedding"],            "nomic-embed-text:v1.5", "Best local embedding model for RAG"),
+    {"tag": "llama3.2:1b", "params_b": 1.24, "vram_gb": 0.9, "capabilities": ['tools', 'chat', 'agentic']},
+    {"tag": "llama3.2:3b", "params_b": 3.21, "vram_gb": 6.9, "capabilities": ['tools', 'chat', 'agentic']},
+    {"tag": "llama3.1:8b", "params_b": 8.03, "vram_gb": 16.5, "capabilities": ['chat', 'agentic', 'code', 'coding', 'tools']},
+    {"tag": "llama3.2-11b:vision", "params_b": 10.6, "vram_gb": 6.4, "capabilities": ['tools', 'vision', 'chat', 'agentic']},
+    {"tag": "llama3.3:70b", "params_b": 70.6, "vram_gb": 43.7, "capabilities": ['chat', 'agentic', 'code', 'coding', 'tools']},
+    {"tag": "llama-4:scout", "params_b": 109, "vram_gb": 66.1, "capabilities": ['tools', 'vision', 'chat', 'agentic']},
+    {"tag": "llama-4:maverick", "params_b": 400, "vram_gb": 243.7, "capabilities": ['tools', 'vision', 'chat', 'agentic']},
+    {"tag": "qwen2.5:3b", "params_b": 3.09, "vram_gb": 2.1, "capabilities": ['tools', 'chat', 'agentic']},
+    {"tag": "qwen2.5:7b", "params_b": 7.62, "vram_gb": 4.9, "capabilities": ['chat', 'agentic', 'code', 'coding', 'tools']},
+    {"tag": "qwen2.5:14b", "params_b": 14.7, "vram_gb": 9.7, "capabilities": ['chat', 'agentic', 'code', 'coding', 'tools']},
+    {"tag": "qwen2.5:32b", "params_b": 32.5, "vram_gb": 20.8, "capabilities": ['chat', 'agentic', 'code', 'coding', 'tools']},
+    {"tag": "qwen2.5:72b", "params_b": 72.7, "vram_gb": 48.6, "capabilities": ['chat', 'agentic', 'code', 'coding', 'tools']},
+    {"tag": "qwen2.5-vl:3b", "params_b": 3.09, "vram_gb": 2.1, "capabilities": ['vision', 'chat']},
+    {"tag": "qwen2.5-vl:7b", "params_b": 7.62, "vram_gb": 4.9, "capabilities": ['tools', 'vision', 'chat', 'agentic']},
+    {"tag": "qwen2.5-vl:72b", "params_b": 72.7, "vram_gb": 48.6, "capabilities": ['tools', 'vision', 'chat', 'agentic']},
+    {"tag": "qwen3:8b", "params_b": 8.2, "vram_gb": 5.6, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
+    {"tag": "qwen3:32b", "params_b": 32.8, "vram_gb": 20.8, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
+    {"tag": "qwen3-coder-30b:a3b", "params_b": 30.5, "vram_gb": 19.0, "capabilities": ['chat', 'agentic', 'code', 'coding', 'tools']},
+    {"tag": "qwen3-next-80b:a3b", "params_b": 80, "vram_gb": 48.5, "capabilities": ['tools', 'chat', 'agentic']},
+    {"tag": "deepseek-r1:7b", "params_b": 7.62, "vram_gb": 4.9, "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding']},
+    {"tag": "deepseek-r1:14b", "params_b": 14.7, "vram_gb": 9.7, "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding']},
+    {"tag": "deepseek-r1:32b", "params_b": 32.5, "vram_gb": 20.8, "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding']},
+    {"tag": "deepseek-r1:70b", "params_b": 70.6, "vram_gb": 43.7, "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding']},
+    {"tag": "qwq:32b", "params_b": 32.5, "vram_gb": 20.9, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
+    {"tag": "phi-4-mini:3.8b", "params_b": 3.84, "vram_gb": 3.0, "capabilities": ['chat']},
+    {"tag": "phi-4:14b", "params_b": 14.7, "vram_gb": 9.8, "capabilities": ['coding', 'chat', 'code']},
+    {"tag": "mistral-nemo:12b", "params_b": 12.2, "vram_gb": 8.4, "capabilities": ['tools', 'chat', 'agentic']},
+    {"tag": "mistral-small-3.1:24b", "params_b": 23.6, "vram_gb": 14.9, "capabilities": ['chat', 'agentic', 'code', 'coding', 'vision', 'tools']},
+    {"tag": "gemma-2:9b", "params_b": 9.24, "vram_gb": 7.0, "capabilities": ['chat']},
+    {"tag": "gemma-2:27b", "params_b": 27.2, "vram_gb": 18.1, "capabilities": ['chat']},
+    {"tag": "gemma-3:4b", "params_b": 3.88, "vram_gb": 3.1, "capabilities": ['vision', 'chat']},
+    {"tag": "gemma-3:12b", "params_b": 11.8, "vram_gb": 9.2, "capabilities": ['coding', 'vision', 'chat', 'code']},
+    {"tag": "gemma-3:27b", "params_b": 27.0, "vram_gb": 18.9, "capabilities": ['coding', 'vision', 'chat', 'code']},
+    {"tag": "glm-4.7:flash", "params_b": 31, "vram_gb": 18.5, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
+    {"tag": "nemotron-nano:12b", "params_b": 12.6, "vram_gb": 7.5, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
+    {"tag": "qwen2.5-coder:7b", "params_b": 7.62, "vram_gb": 4.9, "capabilities": ['coding', 'chat', 'code']},
+    {"tag": "qwen2.5-coder:14b", "params_b": 14.7, "vram_gb": 9.7, "capabilities": ['coding', 'chat', 'code']},
+    {"tag": "qwen2.5-coder:32b", "params_b": 32.5, "vram_gb": 20.8, "capabilities": ['coding', 'chat', 'code']},
+    {"tag": "codestral:22b", "params_b": 22.2, "vram_gb": 14.2, "capabilities": ['chat']},
+    {"tag": "starcoder2:15b", "params_b": 15.6, "vram_gb": 10.2, "capabilities": ['coding', 'chat', 'code']},
+    {"tag": "phi-3-mini:3.8b", "params_b": 3.82, "vram_gb": 3.9, "capabilities": ['chat']},
+    {"tag": "deepseek-coder:6.7b", "params_b": 6.74, "vram_gb": 6.0, "capabilities": ['coding', 'chat', 'code']},
+    {"tag": "smallthinker:3b", "params_b": 3.09, "vram_gb": 2.1, "capabilities": ['reasoning', 'math', 'chat']},
+    {"tag": "ministral:8b", "params_b": 8.02, "vram_gb": 5.6, "capabilities": ['tools', 'chat', 'agentic']},
+    {"tag": "devstral-small:24b", "params_b": 23.6, "vram_gb": 14.9, "capabilities": ['chat', 'agentic', 'code', 'coding', 'tools']},
+    {"tag": "magistral-small:24b", "params_b": 23.6, "vram_gb": 14.9, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'vision', 'tools']},
+    {"tag": "gpt-oss:20b", "params_b": 21, "vram_gb": 11.9, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
+    {"tag": "minimax:m2.1", "params_b": 229, "vram_gb": 138.3, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'code', 'coding', 'tools']},
+    {"tag": "step-3.5:flash", "params_b": 197, "vram_gb": 119.7, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'code', 'coding', 'tools']},
+    {"tag": "glm:4.6", "params_b": 357, "vram_gb": 216.3, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
+    {"tag": "qwen3.5:0.8b", "params_b": 0.8, "vram_gb": 0.6, "capabilities": ['chat']},
+    {"tag": "qwen3.5:2b", "params_b": 2.0, "vram_gb": 1.3, "capabilities": ['chat']},
+    {"tag": "qwen3.5:4b", "params_b": 4.0, "vram_gb": 2.9, "capabilities": ['chat']},
+    {"tag": "qwen3.5:9b", "params_b": 9.0, "vram_gb": 5.9, "capabilities": ['chat']},
+    {"tag": "qwen3.5:27b", "params_b": 27.0, "vram_gb": 17.5, "capabilities": ['chat']},
+    {"tag": "qwen3.5-35b:a3b", "params_b": 35.0, "vram_gb": 23.0, "capabilities": ['chat']},
+    {"tag": "qwen3.5-122b:a10b", "params_b": 122.0, "vram_gb": 26.6, "capabilities": ['chat']},
+    {"tag": "qwen3.5-397b:a17b", "params_b": 397.0, "vram_gb": 29.2, "capabilities": ['chat']},
+    {"tag": "minimax:m2.5", "params_b": 56.85, "vram_gb": 26.6, "capabilities": ['tools', 'chat', 'agentic']},
+    {"tag": "glm:5", "params_b": 56.41, "vram_gb": 26.3, "capabilities": ['tools', 'chat', 'agentic']},
+    {"tag": "gemma-4:e2b", "params_b": 2.3, "vram_gb": 3.4, "capabilities": ['reasoning', 'math', 'chat', 'agentic', 'vision', 'tools']},
+    {"tag": "gemma-4:e4b", "params_b": 4.5, "vram_gb": 5.4, "capabilities": ['reasoning', 'math', 'chat', 'agentic', 'vision', 'tools']},
+    {"tag": "gemma-4-26b:a4b", "params_b": 26.0, "vram_gb": 15.9, "capabilities": ['reasoning', 'math', 'chat', 'agentic', 'vision', 'tools']},
+    {"tag": "gemma-4:31b", "params_b": 31.0, "vram_gb": 18.6, "capabilities": ['reasoning', 'math', 'chat', 'agentic', 'vision', 'tools']},
+    {"tag": "nemotron-3-nano:4b", "params_b": 3.97, "vram_gb": 2.8, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
+    {"tag": "nemotron-cascade-2-30b:a3b", "params_b": 30.0, "vram_gb": 23.1, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
 ]
 
-FALLBACK_MODELS = MODELS
+def _dict_to_profile(d: dict) -> ModelProfile:
+    """Convert a whatmodels-style dict entry to a ModelProfile."""
+    tag = d.get("tag", d.get("name", "unknown"))
+    name = tag
+    params = float(d.get("params_b", 0.0))
+    vram = float(d.get("vram_gb", params * 0.65))
+    caps = d.get("capabilities", ["chat"])
+
+    family = "unknown"
+    tl = tag.lower()
+    for fam in ("llama", "qwen", "gemma", "mistral", "phi", "deepseek", "nomic"):
+        if fam in tl:
+            family = fam
+            break
+
+    return ModelProfile(
+        name=name,
+        family=family,
+        params_b=params,
+        quant="Q4_K_M",
+        vram_gb=vram,
+        ram_gb=vram * 2,
+        ctx_k=128,
+        tok_per_sec_gpu={},
+        tok_per_sec_cpu=1.5,
+        capabilities=caps,
+        recommended_for=caps,
+        ollama_tag=tag,
+        notes="",
+        weight_gb=d.get("weight_gb", 0.0),
+        kv_per_1k_gb=d.get("kv_per_1k_gb", 0.0),
+        layers=d.get("layers") or 0,
+    )
+
+FALLBACK_MODELS: list[ModelProfile] = [_dict_to_profile(d) for d in MODELS]
 
 async def inspect_local_models(host: str = "localhost:11434") -> list[dict]:
     async with httpx.AsyncClient(timeout=5.0) as client:
@@ -175,7 +240,15 @@ def estimate_vram_from_size(size_bytes: float) -> float:
     q4_overhead = 1.08
     return gb_from_size * q4_overhead
 
+from neuralbrok.hardware import lookup_gpu
+
 def get_tok_per_sec(profile: ModelProfile, device_key: str) -> float:
+    gpu = lookup_gpu(device_key)
+    if gpu and gpu.bandwidth_gbps:
+        weight = profile.weight_gb if profile.weight_gb > 0 else (profile.params_b * 0.7)
+        overhead = 1.0
+        return round(gpu.bandwidth_gbps / (weight + overhead), 1)
+
     device_key = device_key.lower()
     if device_key in profile.tok_per_sec_gpu:
         return float(profile.tok_per_sec_gpu[device_key])

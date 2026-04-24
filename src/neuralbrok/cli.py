@@ -890,7 +890,7 @@ def start(port, host, config, mode=None):
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}    {MAGENTA}{BOLD}NEURAL{RESET}{PINK}{BOLD}BROKER{RESET}                                          {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}           {DIM}║{RESET}")
-    print(f"  {DIM}║{RESET}    {DIM}v0.4.1  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}v0.4.5  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     print(f"  {DIM}╚{W}╝{RESET}")
     print()
