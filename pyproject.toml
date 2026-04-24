@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "neuralbrok"
-version = "0.4.0"
+version = "0.4.1"
 description = "VRAM-aware LLM routing daemon — local-first, OpenAI-compatible"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -43,7 +43,7 @@ dev = [
 ]
 
 [project.scripts]
-neuralbrok = "neuralbrok.cli:main"
+neuralbrok = "neuralbrok.cli:_cli_entry"
 
 [project.urls]
 Homepage = "https://neuralbroker.space"

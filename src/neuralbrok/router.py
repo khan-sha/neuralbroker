@@ -3,6 +3,9 @@ Policy engine with 3 routing modes, provider scoring, and circuit breakers.
 
 Replaces the simple threshold router from Week 1.
 """
+import json
+import asyncio
+import httpx
 import logging
 import time
 from collections import deque
@@ -18,6 +21,9 @@ from neuralbrok.types import (
     CircuitState,
     ProviderStatus,
 )
+from neuralbrok.selector import SmartModelSelector
+from neuralbrok.models import get_runnable_models
+from neuralbrok.detect import detect_device
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +59,9 @@ class PolicyEngine:
         # Circuit breaker state per provider name
         self._circuits: dict[str, CircuitState] = {}
 
+        # Latency tracking
+        self._latencies: dict[str, deque] = {}
+
         # Routing decision log (last 500)
         self._routing_log: deque[dict] = deque(maxlen=500)
 
@@ -64,6 +73,9 @@ class PolicyEngine:
             "total_cost_local": 0.0,
             "total_cost_cloud": 0.0,
             "total_saved": 0.0,
+            "smart_classifications": 0,
+            "total_classify_ms": 0.0,
+            "fallback_to_cost_count": 0,
             "session_start": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -72,6 +84,107 @@ class PolicyEngine:
 
         # Track last error per provider for fallback mode
         self._last_error: dict[str, datetime] = {}
+
+    async def decide_async(
+        self,
+        request_body: dict,
+        vram: Optional[VramSnapshot],
+        available_providers: list[str],
+        provider_types: dict[str, str],
+        provider_costs: dict[str, float],
+        requested_model: str = "",
+    ) -> RouteDecision:
+        if self.mode == PolicyMode.SMART:
+            try:
+                prof = detect_device()
+                device_key = prof.gpu_model if prof.gpu_vendor != "none" else prof.platform
+                vram_gb = vram.vram_used_gb + vram.vram_free_gb if vram else 0
+                runnable = get_runnable_models(vram_gb, prof.ram_gb, device_key)
+                
+                classifier_model = "qwen3:0.6b" if any(m.name == "qwen3:0.6b" for m in runnable) else "phi4-mini:3.8b"
+                
+                start_class = time.perf_counter()
+                prompt_text = ""
+                if "messages" in request_body and request_body["messages"]:
+                    prompt_text = str(request_body["messages"][-1].get("content", ""))[:200]
+                
+                system_prompt = 'Classify this prompt into one or more categories. Respond with only a JSON array of strings.\nCategories: ["chat", "coding", "math", "reasoning", "vision", "tools", "rag", "multilingual"]'
+                
+                loaded_models = []
+                try:
+                    async with httpx.AsyncClient(timeout=0.5) as client:
+                        r = await client.get("http://localhost:11434/api/tags")
+                        if r.status_code == 200:
+                            loaded_models = [m["name"] for m in r.json().get("models", [])]
+                except Exception:
+                    pass
+                
+                async with httpx.AsyncClient(timeout=1.5) as client:
+                    resp = await client.post("http://localhost:11434/api/chat", json={
+                        "model": classifier_model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt_text}
+                        ],
+                        "stream": False
+                    })
+                    if resp.status_code == 200:
+                        content = resp.json()["message"]["content"]
+                        import re
+                        match = re.search(r'\[.*\]', content, re.DOTALL)
+                        categories = json.loads(match.group(0)) if match else []
+                        class_time = int((time.perf_counter() - start_class) * 1000)
+                        
+                        selector = SmartModelSelector(device_key, vram.vram_free_gb if vram else 0, runnable)
+                        best_models = selector.for_workload(categories)
+                        
+                        chosen_model = None
+                        for bm in best_models:
+                            if bm.name in loaded_models or f"{bm.name}:latest" in loaded_models:
+                                chosen_model = bm.name
+                                break
+                        if not chosen_model and loaded_models:
+                            chosen_model = loaded_models[0].replace(":latest", "")
+                        
+                        if chosen_model:
+                            logger.info(f"[smart] {chosen_model} · classified as {categories} · classifier took {class_time}ms")
+                            
+                            local_prov = next((p for p, pt in provider_types.items() if pt == "local"), None)
+                            if local_prov:
+                                request_body["model"] = chosen_model
+                                latency_ms = (time.perf_counter() - start_class) * 1000
+                                decision = RouteDecision(
+                                    backend_chosen=local_prov,
+                                    fallback_chain=[p for p in available_providers if p != local_prov],
+                                    vram_at_decision=vram,
+                                    policy_mode=self.mode,
+                                    classified_as=",".join(categories),
+                                    latency_ms=latency_ms,
+                                    reason=f"smart:{chosen_model}:{','.join(categories)}",
+                                    timestamp=datetime.now(timezone.utc)
+                                )
+                                vram_util = (vram.vram_used_gb / (vram.vram_used_gb + vram.vram_free_gb)) if vram and vram.vram_used_gb + vram.vram_free_gb > 0 else 0
+                                self._routing_log.append({
+                                    "backend": local_prov,
+                                    "mode": "smart",
+                                    "reason": f"smart: classified as {categories} in {class_time}ms → {chosen_model}",
+                                    "classified_as": categories,
+                                    "chosen_model": chosen_model,
+                                    "vram_util": round(vram_util, 3),
+                                    "latency_ms": round(latency_ms, 2),
+                                    "fallback_chain": decision.fallback_chain,
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                })
+                                self._stats["total_requests"] += 1
+                                self._stats["local_requests"] += 1
+                                self._stats["smart_classifications"] += 1
+                                self._stats["total_classify_ms"] += class_time
+                                return decision
+            except Exception as e:
+                logger.warning(f"Smart route failed, falling back to cost mode: {e}")
+                self._stats["fallback_to_cost_count"] += 1
+        
+        return self.decide(vram, available_providers, provider_types, provider_costs, requested_model)
 
     def decide(
         self,
@@ -229,6 +342,7 @@ class PolicyEngine:
     def get_stats(self) -> dict:
         """Return aggregate statistics."""
         total = self._stats["total_requests"]
+        sc = self._stats["smart_classifications"]
         return {
             **self._stats,
             "local_pct": (
@@ -239,6 +353,11 @@ class PolicyEngine:
                 round(self._stats["cloud_requests"] / total * 100, 1)
                 if total > 0 else 0
             ),
+            "avg_classify_ms": (
+                round(self._stats["total_classify_ms"] / sc, 1)
+                if sc > 0 else 0.0
+            ),
+            "total_cost_saved": round(self._stats["total_saved"], 6),
         }
 
     def get_provider_statuses(
@@ -262,6 +381,25 @@ class PolicyEngine:
                 ),
             })
         return statuses
+
+    def record_latency(self, provider_name: str, latency_ms: float) -> None:
+        if provider_name not in self._latencies:
+            self._latencies[provider_name] = deque(maxlen=500)
+        self._latencies[provider_name].append(latency_ms)
+
+    def get_latency_stats(self) -> dict:
+        stats = {}
+        for name, lat_list in self._latencies.items():
+            if not lat_list:
+                continue
+            s_list = sorted(list(lat_list))
+            stats[name] = {
+                "p50": s_list[int(len(s_list)*0.5)],
+                "p95": s_list[int(len(s_list)*0.95)],
+                "p99": s_list[int(len(s_list)*0.99)],
+                "samples": len(s_list),
+            }
+        return stats
 
     def set_mode(self, mode: str) -> None:
         """Change routing mode at runtime."""
@@ -301,16 +439,25 @@ class PolicyEngine:
             cost = provider_costs.get(name, 0.0)
             is_local = ptype == "local"
 
+            p95 = 500.0
+            if name in self._latencies and len(self._latencies[name]) >= 10:
+                s_list = sorted(list(self._latencies[name]))
+                p95 = s_list[int(len(s_list)*0.95)]
+            else:
+                p95 = 200.0 if is_local else 400.0
+            
+            latency_penalty = p95 / 1000.0
+
             if self.mode == PolicyMode.COST:
-                score = self._score_cost_mode(is_local, cost, vram_util)
+                score = self._score_cost_mode(is_local, cost, vram_util) - latency_penalty * 0.2
             elif self.mode == PolicyMode.SPEED:
-                score = self._score_speed_mode(is_local)
+                score = self._score_speed_mode(is_local) - latency_penalty * 2.0
             elif self.mode == PolicyMode.FALLBACK:
                 score = self._score_fallback_mode(
                     name, is_local, cost, vram_util
-                )
+                ) - latency_penalty * 0.2
             else:
-                score = 0.0
+                score = self._score_cost_mode(is_local, cost, vram_util) - latency_penalty * 0.2
 
             # Model compatibility check: penalise providers that explicitly
             # declare SUPPORTED_MODELS and don't include the requested model.

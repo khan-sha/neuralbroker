@@ -16,6 +16,7 @@ class PolicyMode(str, Enum):
     COST = "cost"
     SPEED = "speed"
     FALLBACK = "fallback"
+    SMART = "smart"
 
 
 # ── OpenAI Wire Types ────────────────────────────────────────────────────────
@@ -89,6 +90,7 @@ class RouteDecision:
     fallback_chain: list[str] = field(default_factory=list)
     vram_at_decision: Optional[VramSnapshot] = None
     policy_mode: PolicyMode = PolicyMode.COST
+    classified_as: str = ""
     latency_ms: float = 0.0
     reason: str = ""  # "vram_ok" | "vram_full" | "speed_mode" | "fallback"
     cost_usd: float = 0.0
@@ -121,6 +123,6 @@ class ProviderStatus:
     last_latency_ms: float = 0.0
 
 
-# ── Lead Capture ──────────────────────────────────────────────────────────────
+
 
 

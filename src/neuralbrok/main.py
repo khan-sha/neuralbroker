@@ -2,7 +2,7 @@
 FastAPI application — NeuralBroker.
 
 VRAM-aware LLM routing proxy with OpenAI-compatible endpoints,
-lead capture, internal observability APIs, and Prometheus metrics.
+internal observability APIs, and Prometheus metrics.
 """
 import json
 import logging
@@ -325,7 +325,8 @@ async def chat_completions(request: Request):
             )
 
     # Route decision
-    decision = policy_engine.decide(
+    decision = await policy_engine.decide_async(
+        request_body=body,
         vram=vram_snapshot,
         available_providers=list(providers.keys()),
         provider_types=provider_types,
@@ -357,8 +358,14 @@ async def chat_completions(request: Request):
                 # Streaming response
                 async def stream_generator(prov=provider, bname=backend_name):
                     try:
+                        start_req = time.perf_counter()
+                        first = True
                         async for chunk in prov.chat(body, stream=True):
+                            if first:
+                                first = False
                             yield chunk
+                        if policy_engine:
+                            policy_engine.record_latency(bname, (time.perf_counter() - start_req) * 1000)
                         policy_engine.record_success(bname)
                         nb_metrics.record_request(bname, decision.policy_mode.value, "ok")
                     except ProviderError as e:
@@ -408,9 +415,12 @@ async def chat_completions(request: Request):
             else:
                 # Non-streaming response
                 result_text = ""
+                start_req = time.perf_counter()
                 async for chunk in provider.chat(body, stream=False):
                     result_text += chunk
 
+                if policy_engine:
+                    policy_engine.record_latency(backend_name, (time.perf_counter() - start_req) * 1000)
                 policy_engine.record_success(backend_name)
                 nb_metrics.record_request(backend_name, decision.policy_mode.value, "ok")
 
@@ -428,6 +438,7 @@ async def chat_completions(request: Request):
                         "X-NB-VRAM": vram_pct,
                         "X-NB-Cost": f"${provider_costs.get(backend_name, 0):.6f}",
                         "X-NB-RoutingMode": decision.policy_mode.value,
+                        "X-NB-Classified": decision.classified_as or "none",
                     },
                 )
 
@@ -480,6 +491,12 @@ async def list_models(request: Request):
 @app.get("/nb/vram")
 async def nb_vram():
     """Current VRAM snapshot per GPU."""
+    if poller is None:
+        return Response(
+            content=json.dumps(_openai_error(503, "VRAM poller not initialized")),
+            status_code=503,
+            media_type="application/json",
+        )
     snap = poller.latest()
     total = snap.vram_used_gb + snap.vram_free_gb
     return {
@@ -496,12 +513,16 @@ async def nb_vram():
 @app.get("/nb/routing-log")
 async def nb_routing_log():
     """Last 500 routing decisions."""
+    if policy_engine is None:
+        return {"decisions": []}
     return {"decisions": policy_engine.get_routing_log()}
 
 
 @app.get("/nb/providers")
 async def nb_providers():
     """List configured providers with health and circuit breaker status."""
+    if policy_engine is None:
+        return {"providers": []}
     statuses = policy_engine.get_provider_statuses(
         list(providers.keys()), provider_types
     )
@@ -517,9 +538,17 @@ async def nb_providers():
     return {"providers": statuses}
 
 
+@app.get("/nb/latency")
+async def nb_latency():
+    if policy_engine:
+        return policy_engine.get_latency_stats()
+    return {}
+
 @app.get("/nb/stats")
 async def nb_stats():
     """Aggregate statistics: requests, local %, cloud %, cost saved."""
+    if policy_engine is None:
+        return {}
     return policy_engine.get_stats()
 
 
@@ -538,6 +567,8 @@ async def health_check():
 @app.get("/telemetry")
 async def telemetry():
     """Live VRAM snapshot from background poller. For debugging."""
+    if poller is None:
+        return {"gpu_id": 0, "vram_used_gb": 0.0, "vram_free_gb": 0.0, "timestamp": None}
     snap = poller.latest()
     return {
         "gpu_id": snap.gpu_id,
@@ -559,8 +590,8 @@ async def prometheus_metrics():
 @app.get("/")
 async def root_redirect():
     """Redirect to onboarding/dashboard."""
-    stats = policy_engine.get_stats()
-    log = policy_engine.get_routing_log()
+    stats = policy_engine.get_stats() if policy_engine else {}
+    log = policy_engine.get_routing_log() if policy_engine else []
     if stats.get("total_requests", 0) == 0 and len(log) == 0:
         from fastapi.responses import RedirectResponse
         return RedirectResponse(url="/onboarding")

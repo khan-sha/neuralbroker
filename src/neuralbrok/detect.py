@@ -1,6 +1,7 @@
 import platform
 import subprocess
 import sys
+import warnings
 import psutil
 from dataclasses import dataclass
 from typing import List, Optional
@@ -106,7 +107,9 @@ def detect_device() -> DeviceProfile:
 
     # 2. Check NVIDIA via pynvml
     try:
-        import pynvml
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*deprecated.*")
+            import pynvml
         pynvml.nvmlInit()
         handle = pynvml.nvmlDeviceGetHandleByIndex(0)
         gpu_name = pynvml.nvmlDeviceGetName(handle)

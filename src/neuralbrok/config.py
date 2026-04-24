@@ -145,4 +145,8 @@ def load_config(path: Optional[str] = None) -> Config:
         if cp.cost_per_1k_tokens == 0.0 and cp.name in CLOUD_COSTS:
             cp.cost_per_1k_tokens = CLOUD_COSTS[cp.name]
 
+    if os.environ.get("NB_POLICY_MODE"):
+        if not config.routing:
+            config.routing = RoutingConfig()
+        config.routing.default_mode = os.environ.get("NB_POLICY_MODE")
     return config

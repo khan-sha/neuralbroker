@@ -1,5 +1,6 @@
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __author__ = "NeuralBroker contributors"
 
-# Expose submodules for easier access and patching
-from . import main, config, types, router, telemetry, notify, metrics, detect, autoconfig
+# Expose core submodules — avoid circular imports by only exposing needed modules
+from . import config, types, detect, autoconfig
+
