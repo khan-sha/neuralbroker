@@ -22,7 +22,7 @@ from neuralbrok.types import (
     ProviderStatus,
 )
 from neuralbrok.selector import SmartModelSelector
-from neuralbrok.models import get_runnable_models
+from neuralbrok.models import get_runnable_models, resolve_model
 from neuralbrok.detect import detect_device
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,9 @@ class PolicyEngine:
                 vram_gb = vram.vram_used_gb + vram.vram_free_gb if vram else 0
                 runnable = get_runnable_models(vram_gb, prof.ram_gb, device_key)
                 
-                classifier_model = "qwen3:0.6b" if any(m.name == "qwen3:0.6b" for m in runnable) else "phi4-mini:3.8b"
+                small_model = resolve_model("small")
+                mini_model = resolve_model("phi-4-mini")
+                classifier_model = small_model if any(m.name == small_model for m in runnable) else mini_model
                 
                 start_class = time.perf_counter()
                 prompt_text = ""
@@ -180,6 +182,55 @@ class PolicyEngine:
                                 self._stats["smart_classifications"] += 1
                                 self._stats["total_classify_ms"] += class_time
                                 return decision
+                        
+                        # ── No installed local model matched — try Ollama Cloud ──
+                        # Read cloud models from config if present
+                        cloud_tags = getattr(self.config, "ollama_cloud_models", [])
+                        if not cloud_tags:
+                            # Check config file directly for ollama_cloud_models key
+                            try:
+                                import os, yaml as _yaml
+                                cfg_path = os.path.expanduser("~/.neuralbrok/config.yaml")
+                                if os.path.exists(cfg_path):
+                                    with open(cfg_path) as _f:
+                                        _raw = _yaml.safe_load(_f)
+                                    cloud_tags = _raw.get("ollama_cloud_models", [])
+                            except Exception:
+                                pass
+
+                        if cloud_tags and local_prov:
+                            # Pick the first cloud tag (highest priority)
+                            cloud_model = cloud_tags[0]
+                            request_body["model"] = cloud_model
+                            latency_ms = (time.perf_counter() - start_class) * 1000
+                            logger.info(f"[smart→cloud] no local fit → {cloud_model} (Ollama Cloud)")
+                            decision = RouteDecision(
+                                backend_chosen=local_prov,
+                                fallback_chain=[p for p in available_providers if p != local_prov],
+                                vram_at_decision=vram,
+                                policy_mode=self.mode,
+                                classified_as=",".join(categories) + ":cloud",
+                                latency_ms=latency_ms,
+                                reason=f"smart:cloud:{cloud_model}:{','.join(categories)}",
+                                timestamp=datetime.now(timezone.utc)
+                            )
+                            self._routing_log.append({
+                                "backend": local_prov,
+                                "mode": "smart",
+                                "reason": f"smart→cloud: no local model fit → {cloud_model}",
+                                "classified_as": categories,
+                                "chosen_model": cloud_model,
+                                "is_cloud": True,
+                                "latency_ms": round(latency_ms, 2),
+                                "fallback_chain": decision.fallback_chain,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            })
+                            self._stats["total_requests"] += 1
+                            self._stats["cloud_requests"] += 1
+                            self._stats["smart_classifications"] += 1
+                            self._stats["total_classify_ms"] += class_time
+                            return decision
+
             except Exception as e:
                 logger.warning(f"Smart route failed, falling back to cost mode: {e}")
                 self._stats["fallback_to_cost_count"] += 1

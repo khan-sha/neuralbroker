@@ -2,9 +2,37 @@ from dataclasses import dataclass, field
 import asyncio
 import json
 import time
+import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 import httpx
+
+# ── 2026 Hardened Model Registry ──────────────────────────────────────────
+# Maps workloads and legacy aliases to modern, high-performance models.
+MODEL_REGISTRY: Dict[str, str] = {
+    "default":         "qwen3:7b",
+    "coding":          "qwen2.5-coder:7b",
+    "coding_large":    "qwen3-coder:30b",
+    "reasoning":       "deepseek-r1:7b",
+    "reasoning_large": "deepseek-r1:32b",
+    "vision":          "gemma4:9b",
+    "vision_large":    "gemma4:26b",
+    "long_context":    "llama4:8b",
+    "small":           "phi-4-mini",
+    "small_mid":       "phi-4",
+    "cloud_default":   "gpt-oss:120b-cloud",
+    "cloud_coding":    "qwen3-coder:480b-cloud",
+    "llama2":          "qwen3:7b",
+    "llama3":          "llama4:8b",
+    "codellama":       "qwen2.5-coder:7b",
+    "mistral":         "qwen3:7b",
+    "gemma":           "gemma4:9b",
+    "gemma2":          "gemma4:9b",
+}
+
+def resolve_model(name: str) -> str:
+    """Resolve a model name or alias to its registry-recommended tag."""
+    return MODEL_REGISTRY.get(name, name)
 
 @dataclass
 class ModelProfile:
@@ -12,7 +40,7 @@ class ModelProfile:
     family: str
     params_b: float
     quant: str
-    vram_gb: float
+    vram_gb: float  # Legacy/Fallback
     ram_gb: float
     ctx_k: int
     tok_per_sec_gpu: dict
@@ -21,15 +49,41 @@ class ModelProfile:
     recommended_for: list[str]
     ollama_tag: str
     notes: str
+    weight_gb: float = 0.0  # Precision field from whatmodels
+    kv_per_1k_gb: float = 0.0  # Precision field from whatmodels
+    layers: int = 0
     is_installed: bool = False
     vram_estimated_gb: float = 0.0
+
+def estimate_vram_requirement(model: ModelProfile, context_k: int) -> float:
+    """Calculate precise VRAM requirement: weights + KV cache."""
+    if model.weight_gb > 0 and model.kv_per_1k_gb > 0:
+        return model.weight_gb + (model.kv_per_1k_gb * context_k)
+    return model.vram_gb # Fallback
+
+async def validate_models(host: str = "localhost:11434") -> Dict[str, bool]:
+    """Check which models from the registry are installed locally."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"http://{host}/api/tags")
+            if resp.status_code != 200:
+                return {}
+            installed = {m["name"] for m in resp.json().get("models", [])}
+            
+            results = {}
+            for alias, tag in MODEL_REGISTRY.items():
+                if not tag.endswith(":cloud"):
+                    results[tag] = tag in installed
+            return results
+    except Exception:
+        return {}
 
 MODELS = [
     # Qwen3 family
     ModelProfile("qwen3:0.6b",   "qwen3",    0.6,  "q4_K_M", 0.8,  2,   32,  {"rtx3060": 150, "rtx3070": 180, "rtx3080": 220, "rtx3090": 250, "rtx4060": 180, "rtx4070": 220, "rtx4080": 280, "rtx4090": 350, "m1": 100, "m1pro": 120, "m1max": 140, "m2": 120, "m2pro": 140, "m2max": 160, "m3": 140, "m3pro": 160, "m3max": 180, "m4": 160, "m4pro": 180, "m4max": 200, "rx6800xt": 180, "rx7900xtx": 250, "cpu": 12.0}, 12.0, ["chat","tools","code","reasoning"], ["chat","coding"], "qwen3:0.6b", "Smallest usable model — fits any hardware"),
     ModelProfile("qwen3:1.7b",   "qwen3",    1.7,  "q4_K_M", 1.5,  4,   32,  {"rtx3060": 90, "rtx3070": 110, "rtx3080": 140, "rtx3090": 160, "rtx4060": 110, "rtx4070": 140, "rtx4080": 180, "rtx4090": 220, "m1": 60, "m2": 75, "m3": 90, "rx6800xt": 110, "cpu": 8.0}, 8.0,  ["chat","tools","code","reasoning"], ["chat","coding"], "qwen3:1.7b", "Good quality for <2GB VRAM"),
     ModelProfile("qwen3:4b",     "qwen3",    4.0,  "q4_K_M", 3.0,  6,   32,  {"rtx3060": 55, "rtx3070": 65, "rtx3080": 85, "rtx3090": 100, "rtx4060": 65, "rtx4070": 85, "rtx4080": 110, "rtx4090": 140, "m1": 35, "m2": 45, "m3": 55, "rx6800xt": 65, "cpu": 5.0}, 5.0,  ["chat","tools","code","reasoning"], ["chat","coding","agentic"], "qwen3:4b", "Best quality under 4GB VRAM"),
-    ModelProfile("qwen3:8b",     "qwen3",    8.0,  "q4_K_M", 5.5,  8,   128, {"rtx3060": 28, "rtx3070": 35, "rtx3080": 42, "rtx3090": 50, "rtx4060": 35, "rtx4070": 45, "rtx4080": 60, "rtx4090": 80, "m1": 20, "m1pro": 25, "m1max": 35, "m2": 25, "m2pro": 30, "m2max": 40, "m3": 30, "m3pro": 35, "m3max": 45, "m4": 35, "m4pro": 40, "m4max": 50, "rx6800xt": 35, "rx7900xtx": 55, "cpu": 3.0}, 3.0,  ["chat","tools","code","reasoning","multilingual"], ["chat","coding","agentic","rag"], "qwen3:8b", "Best all-rounder for 6-8GB VRAM"),
+    ModelProfile("qwen3:8b",     "qwen3",    8.0,  "q4_K_M", 5.5,  8,   128, {"rtx3060": 28, "rtx3070": 35, "rtx3080": 42, "rtx3090": 50, "rtx4060": 35, "rtx4070": 45, "rtx4080": 60, "rtx4090": 80, "m1": 20, "m1pro": 25, "m1max": 35, "m2": 25, "m2pro": 30, "m2max": 40, "m3": 30, "m3pro": 35, "m3max": 45, "m4": 35, "m4pro": 40, "m4max": 50, "rx6800xt": 35, "rx7900xtx": 55, "cpu": 3.0}, 3.0,  ["chat","tools","code","reasoning","multilingual"], ["chat","coding","agentic","rag"], "qwen3:8b", "Best all-rounder for 6-8GB VRAM", weight_gb=4.92, kv_per_1k_gb=0.122, layers=32),
     ModelProfile("qwen3:14b",    "qwen3",    14.0, "q4_K_M", 9.0,  16,  128, {"rtx3060": 15, "rtx3070": 20, "rtx3080": 25, "rtx3090": 32, "rtx4060": 20, "rtx4070": 26, "rtx4080": 35, "rtx4090": 48, "m1max": 20, "m2max": 24, "m3max": 28, "m4max": 32, "rx6800xt": 20, "rx7900xtx": 35, "cpu": 1.5}, 1.5,  ["chat","tools","code","reasoning","multilingual"], ["chat","coding","agentic","rag","math"], "qwen3:14b", "Strong reasoning for 10-12GB VRAM"),
     ModelProfile("qwen3:32b",    "qwen3",    32.0, "q4_K_M", 20.0, 32,  128, {"rtx3090": 15, "rtx4080": 16, "rtx4090": 22, "m2max": 10, "m3max": 12, "m4max": 14, "rx7900xtx": 16, "cpu": 0.5}, 0.5,  ["chat","tools","code","reasoning","multilingual"], ["chat","coding","agentic","math"], "qwen3:32b", "Near-frontier quality for 24GB VRAM"),
     ModelProfile("qwen3:30b-a3b","qwen3",    30.0, "q4_K_M", 4.0,  8,   128, {"rtx3060": 35, "rtx3070": 42, "rtx3080": 55, "rtx3090": 65, "rtx4060": 42, "rtx4070": 55, "rtx4080": 75, "rtx4090": 95, "m1max": 30, "m2max": 35, "m3max": 40, "m4max": 45, "rx6800xt": 42, "rx7900xtx": 65, "cpu": 2.0}, 2.0,  ["chat","tools","code","reasoning"], ["chat","coding","agentic"], "qwen3:30b-a3b", "MoE — frontier quality at 4GB active VRAM"),
@@ -142,9 +196,10 @@ def get_runnable_models(vram_gb: float, ram_gb: float, device_key: str, is_lapto
 
     runnable = []
     for model in models:
-        effective_vram = model.vram_estimated_gb if model.vram_estimated_gb > 0 else model.vram_gb
-
-        if vram_gb > 0 and effective_vram > usable_vram:
+        # Precision routing: assume 4k context for safety check, or use model's max if it's a tight fit
+        vram_needed = estimate_vram_requirement(model, context_k=4) 
+        
+        if vram_gb > 0 and vram_needed > usable_vram:
             continue
 
         is_moe = "a" in model.name and "-" in model.name

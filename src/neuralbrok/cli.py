@@ -11,7 +11,9 @@ import httpx
 import yaml
 from pathlib import Path
 
+from neuralbrok.config import load_config, generate_config
 from neuralbrok.detect import detect_device
+from neuralbrok.models import resolve_model
 from neuralbrok.autoconfig import generate_config
 
 # ── Pink Matrix color palette ─────────────────────────────────────────────────
@@ -278,17 +280,23 @@ def setup():
     sys.stdout.write(f"\n  {MATRIX}✓ {RESET}{PINK}{workload_name}{RESET}\n\n")
     sys.stdout.flush()
 
-    # Model Assessment
-    sys.stdout.write(f"  {PINK}◐{RESET}  Scanning model catalog...\r")
-    sys.stdout.flush()
-    time.sleep(0.3)
-
+    # ── STEP 2.7 — Live model catalog + hardware advisory ──────────────────
     from neuralbrok.selector import SmartModelSelector
     from neuralbrok.models import get_runnable_models, build_model_catalog, get_tok_per_sec
+    from neuralbrok.ollama_catalog import (
+        fetch_latest_ollama_models, assess_hardware,
+        get_cloud_recommendations, get_runnable_local_models,
+        OLLAMA_CLOUD_MODELS,
+    )
     import asyncio
 
     device_key = profile.gpu_model if profile.gpu_vendor != "none" else profile.platform
 
+    # ── Live catalog fetch ─────────────────────────────────────────────────
+    sys.stdout.write(f"  {PINK}◐{RESET}  Fetching latest models from ollama.com...\r")
+    sys.stdout.flush()
+
+    live_ollama = fetch_latest_ollama_models(timeout=4.0)
     live_catalog = asyncio.run(build_model_catalog(profile, show_progress=False))
     runnable = get_runnable_models(
         profile.vram_gb, profile.ram_gb, device_key,
@@ -297,16 +305,96 @@ def setup():
     )
 
     catalog_installed = sum(1 for m in live_catalog if m.is_installed)
+    live_runnable = get_runnable_local_models(profile.vram_gb, live_ollama)
+
     sys.stdout.write(
-        f"  {MATRIX}✓{RESET}  {PINK}{len(live_catalog)}{RESET} catalog models  "
+        f"  {MATRIX}✓{RESET}  {PINK}{len(live_ollama)}{RESET} models in Ollama library  "
         f"{MATRIX}{catalog_installed}{RESET} installed locally  "
-        f"{PINK}{len(runnable)}{RESET} fit your hardware\n\n"
+        f"{PINK}{len(runnable)}{RESET} fit your VRAM\n\n"
     )
     sys.stdout.flush()
 
+    # ── Hardware advisory ──────────────────────────────────────────────────
+    hw_assessment = assess_hardware(profile.vram_gb, getattr(profile, "bandwidth_gbps", None))
+    hw_tier = hw_assessment["tier"]
+    suggest_cloud = hw_assessment["suggest_cloud"]
+
+    # Choose advisory color + icon
+    if hw_tier in ("excellent", "good"):
+        tier_color, tier_icon = MATRIX, "✓"
+    elif hw_tier == "mid":
+        tier_color, tier_icon = PINK, "◈"
+    elif hw_tier == "low":
+        tier_color, tier_icon = PINK, "⚡"
+    else:  # very_low / cpu_only
+        tier_color, tier_icon = RED, "⚠"
+
+    print(f"  {MAGENTA}{BOLD}▸ HARDWARE ASSESSMENT{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    print(f"  {tier_color}{tier_icon}{RESET}  {hw_assessment['message']}")
+    print(f"  {DIM}   {hw_assessment['speed_note']}{RESET}")
+
+    if getattr(profile, "bandwidth_gbps", None):
+        print(f"  {DIM}   Memory bandwidth: {PINK}{profile.bandwidth_gbps:.0f} GB/s{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}\n")
+    time.sleep(0.15)
+
+    # ── Ollama Cloud advisory (shown for low/very_low/cpu_only tiers) ──────
+    cloud_models_for_config = []
+    use_ollama_cloud = False
+
+    if suggest_cloud:
+        cloud_recs = get_cloud_recommendations(profile.vram_gb, workload_categories)
+
+        if hw_tier in ("cpu_only", "very_low"):
+            advisory_header = f"  {RED}⚠  Your device cannot run quality LLMs locally.{RESET}"
+            advisory_body = f"  {DIM}   Ollama Cloud lets you run frontier models (Kimi K2, Llama 4){RESET}"
+            advisory_body2 = f"  {DIM}   instantly — no VRAM needed, billed per token.{RESET}"
+        else:
+            advisory_header = f"  {PINK}◈  Your device can run local models, but Ollama Cloud{RESET}"
+            advisory_body  = f"  {DIM}   gives you access to frontier models (1T+ param) when{RESET}"
+            advisory_body2 = f"  {DIM}   your local models aren't enough for the task.{RESET}"
+
+        print(f"  {MAGENTA}{BOLD}▸ OLLAMA CLOUD OPTION{RESET}")
+        print(f"  {DIM}{'─' * 54}{RESET}")
+        print(advisory_header)
+        print(advisory_body)
+        print(advisory_body2)
+        print()
+        print(f"  {DIM}Top cloud models for your workload:{RESET}")
+        for i, cm in enumerate(cloud_recs[:4]):
+            star = f"{PINK}★{RESET}" if i == 0 else f"{DIM}·{RESET}"
+            tier_badge = f"{MAGENTA}[flagship]{RESET}" if cm.get("tier") == "flagship" else f"{DIM}[standard]{RESET}"
+            print(f"  {star} {CYAN}{cm['tag']:<32}{RESET} {tier_badge}")
+            print(f"     {DIM}{cm['description'][:70]}{RESET}")
+            time.sleep(0.04)
+
+        print()
+        print(f"  {DIM}Example usage:{RESET}")
+        if cloud_recs:
+            print(f"  {DIM}  $ ollama run {cloud_recs[0]['tag']}{RESET}")
+        print(f"  {DIM}  or via API:  model=""{cloud_recs[0]['tag'] if cloud_recs else 'kimi-k2:cloud'}""{RESET}")
+        print(f"  {DIM}{'─' * 54}{RESET}")
+
+        try:
+            sys.stdout.write(
+                f"\n  {PINK}→{RESET}  Enable Ollama Cloud fallback in routing? {DIM}[y/n]{RESET}:  "
+            )
+            sys.stdout.flush()
+            cloud_ans = input().strip().lower()
+        except KeyboardInterrupt:
+            cloud_ans = "n"
+
+        if cloud_ans == "y":
+            use_ollama_cloud = True
+            cloud_models_for_config = [cm["tag"] for cm in cloud_recs[:3]]
+            print(f"  {MATRIX}✓{RESET} Ollama Cloud enabled — will route to cloud when local models fall short\n")
+        else:
+            print(f"  {DIM}Cloud skipped — you can enable later in config.yaml{RESET}\n")
+
+    # ── Model selection (manual or auto) ───────────────────────────────────
     selector = SmartModelSelector(device_key, profile.vram_gb, runnable)
 
-    # ── Manual model selection ─────────────────────────────────────────────
     if is_manual and runnable:
         print(f"  {MAGENTA}{BOLD}▸ MANUAL MODEL SELECTION{RESET}  {DIM}pick from runnable models{RESET}")
         print(f"  {DIM}{'─' * 54}{RESET}")
@@ -347,30 +435,51 @@ def setup():
 
     rec_models_names = [m.name for m in ranked_models[:4]]
 
-    # Step 3 - Model recommendations panel
-    print(f"  {MAGENTA}{BOLD}▸ MODEL RECOMMENDATIONS{RESET}  {DIM}for your hardware + workload{RESET}")
+    # ── Step 3 — Model recommendations panel ──────────────────────────────
+    print(f"  {MAGENTA}{BOLD}▸ MODEL RECOMMENDATIONS{RESET}  {DIM}local models for your hardware + workload{RESET}")
     print(f"  {DIM}{'─' * 54}{RESET}")
     total_vram = profile.vram_gb if profile.vram_gb > 0 else 8.0
 
-    # Header row
-    print(f"  {DIM}  {'#':<3} {'Model':<22} {'VRAM usage':<23} {'Tok/s':>6}  Compat{RESET}")
+    if ranked_models:
+        print(f"  {DIM}  {'#':<3} {'Model':<24} {'VRAM':<18} {'Tok/s':>5}  Compat{RESET}")
+        for i, model in enumerate(ranked_models[:4]):
+            ev = model.vram_estimated_gb if model.vram_estimated_gb > 0 else model.vram_gb
+            bar = _get_vram_bar(ev, total_vram, width=10)
+            # Use bandwidth-based estimate if available
+            bw = getattr(profile, "bandwidth_gbps", None)
+            if bw:
+                weight = model.weight_gb if model.weight_gb > 0 else model.vram_gb
+                tps = bw / (weight + 1.0)
+            else:
+                tps = get_tok_per_sec(model, device_key)
+            score = getattr(model, "_temp_score", None)
+            compat_str = _compat_bar(score, width=6) if score is not None else f"{DIM}N/A{RESET}"
+            inst_dot = f"{MATRIX}●{RESET}" if model.is_installed else f"{DIM}○{RESET}"
+            star = f" {PINK}★{RESET}" if i == 0 else "  "
+            print(f"  {star}{DIM}{i+1}.{RESET} {inst_dot} {PINK}{model.name:<24}{RESET} {bar} {DIM}{tps:>4.0f}t/s{RESET}  {compat_str}")
+            time.sleep(0.06)
+        print(f"  {DIM}{'─' * 54}{RESET}")
+        print(f"  {DIM}● installed  ○ not pulled  ★ top pick{RESET}")
+    else:
+        print(f"  {RED}⚠  No local models fit in your VRAM.{RESET}")
+        if not use_ollama_cloud:
+            print(f"  {DIM}  Consider enabling Ollama Cloud above, or adding more VRAM.{RESET}")
 
-    for i, model in enumerate(ranked_models[:4]):
-        ev = model.vram_estimated_gb if model.vram_estimated_gb > 0 else model.vram_gb
-        bar = _get_vram_bar(ev, total_vram, width=12)
-        tps = get_tok_per_sec(model, device_key)
-        score = getattr(model, "_temp_score", None)
-        compat_str = _compat_bar(score, width=6) if score is not None else f"{DIM}N/A{RESET}"
-        inst_dot = f"{MATRIX}●{RESET}" if model.is_installed else f"{DIM}○{RESET}"
-        star = f" {PINK}★{RESET}" if i == 0 else "  "
-        print(f"  {star}{DIM}{i+1}.{RESET} {inst_dot} {PINK}{model.name:<22}{RESET} {bar} {DIM}{tps:>4.0f}t/s{RESET}  {compat_str}")
-        time.sleep(0.06)
-    print(f"  {DIM}{'─' * 54}{RESET}")
-    print(f"  {DIM}● installed  ○ not pulled  ★ top pick{RESET}\n")
-            
-    # Step 4 - Cost preview
+    # Live Ollama library picks (newly discovered trending models)
+    if live_ollama and not ranked_models:
+        # Show top 3 from live catalog that would fit if they ran cloud
+        print(f"\n  {DIM}Latest trending models on Ollama (cloud-runnable):{RESET}")
+        for m in live_ollama[:3]:
+            print(f"  {DIM}  · {CYAN}{m.tag:<32}{RESET} {m.description[:45]}{RESET}")
+    print()
+
+    # ── Step 4 — Cost preview ──────────────────────────────────────────────
     cost_1m = (tdp / 1000.0) * 0.14 * (1000000 / 3600000) * 50
-    print(f"  {DIM}⚡  local inference cost: {MATRIX}~${cost_1m:.4f} / 1M tokens{RESET}  {DIM}(at $0.14/kWh · {tdp}W TDP){RESET}\n")
+    if ranked_models:
+        print(f"  {DIM}⚡  local inference cost: {MATRIX}~${cost_1m:.4f} / 1M tokens{RESET}  {DIM}(at $0.14/kWh · {tdp}W TDP){RESET}")
+    if use_ollama_cloud and cloud_models_for_config:
+        print(f"  {DIM}☁  Ollama Cloud: pay-per-token — no local VRAM used{RESET}")
+    print()
 
     # Step 5 - Interactive prompts
     print(f"  {MAGENTA}{BOLD}▸ CONFIGURATION{RESET}")
@@ -399,15 +508,20 @@ def setup():
             print(f"\n  {DIM}Setup cancelled.{RESET}")
             sys.exit(0)
 
+    # Suggest smart mode for low-VRAM or cloud-enabled setups
+    default_mode = "smart" if (suggest_cloud or use_ollama_cloud) else "cost"
+
     print(f"\n  {DIM}Routing modes:{RESET}")
     print(f"    {PINK}cost{RESET}     — local when VRAM free, cheapest cloud when full")
     print(f"    {PINK}speed{RESET}    — always local (fastest, no cloud unless local fails)")
     print(f"    {PINK}fallback{RESET} — local first, spill to cloud only on OOM / error")
-    print(f"    {PINK}smart{RESET}    — classifies each prompt, picks best model automatically\n")
+    print(f"    {PINK}smart{RESET}    — {MATRIX}classifies each prompt, picks best model automatically ★ recommended{RESET}\n")
+    if default_mode == "smart":
+        print(f"  {DIM}   Smart mode recommended — auto-selects local or cloud based on task complexity{RESET}\n")
 
     while True:
         try:
-            mode = prompt("Default routing mode (cost/speed/fallback/smart)", "cost")
+            mode = prompt("Default routing mode (cost/speed/fallback/smart)", default_mode)
             if mode in ["cost", "speed", "fallback", "smart"]:
                 break
             print(f"  {RED}✗ invalid — enter cost, speed, fallback, or smart{RESET}")
@@ -452,6 +566,20 @@ def setup():
     # patch the config string
     config_yaml = config_yaml.replace("electricity_kwh_price: 0.14", f"electricity_kwh_price: {elec_price}")
     config_yaml = config_yaml.replace("default_mode: cost", f"default_mode: {mode}")
+
+    # Inject Ollama Cloud model tags when user opted in
+    if use_ollama_cloud and cloud_models_for_config:
+        cloud_note = (
+            "\n# Ollama Cloud models (run remotely via Ollama's cloud infrastructure)\n"
+            "# Use these as model names in your API calls, e.g. model=\"kimi-k2:cloud\"\n"
+            "ollama_cloud_models:\n"
+        )
+        for tag in cloud_models_for_config:
+            cloud_note += f"  - {tag}\n"
+        # Also inject flag for router
+        cloud_note += "\nrouting_cloud_enabled: true\n"
+        config_yaml += cloud_note
+
     config_path.write_text(config_yaml)
     
     # Step 6.5 - Check Ollama installation
@@ -684,7 +812,7 @@ def setup():
         print(f"  {DIM}No providers configured — add keys later in ~/.neuralbrok/config.yaml{RESET}")
 
     # Routing algorithm self-test
-    if runnable:
+    if runnable or use_ollama_cloud:
         print()
         print(f"  {MAGENTA}{BOLD}▸ ROUTING ALGORITHM TEST{RESET}  {DIM}showing how NeuralBroker will route{RESET}")
         print(f"  {DIM}{'─' * 54}{RESET}")
@@ -694,27 +822,47 @@ def setup():
             ("Solve this integral: ∫x² dx",            ["math", "reasoning"]),
             ("Summarize this 50-page document",        ["rag", "chat", "reasoning"]),
         ]
+        # Cloud fallback map — used when no local model available
+        cloud_fallback = cloud_models_for_config[0] if cloud_models_for_config else "kimi-k2:cloud"
+
         for prompt_text, cats in test_cases:
-            best = selector.best_single(cats)
+            best = selector.best_single(cats) if runnable else None
             if best:
-                tps = get_tok_per_sec(best, device_key)
+                bw = getattr(profile, "bandwidth_gbps", None)
+                if bw:
+                    weight = best.weight_gb if best.weight_gb > 0 else best.vram_gb
+                    tps = bw / (weight + 1.0)
+                else:
+                    tps = get_tok_per_sec(best, device_key)
                 ev = best.vram_estimated_gb if best.vram_estimated_gb > 0 else best.vram_gb
-                print(
-                    f"  {DIM}»{RESET} {DIM}{prompt_text[:40]:<40}{RESET}  "
-                    f"{PINK}→{RESET} {MATRIX}{best.name}{RESET}  {DIM}{tps:.0f}t/s  {ev:.1f}GB{RESET}"
-                )
-                time.sleep(0.05)
+                route_str = f"{MATRIX}{best.name}{RESET}  {DIM}{tps:.0f}t/s  {ev:.1f}GB  [local]{RESET}"
+            elif use_ollama_cloud:
+                route_str = f"{CYAN}{cloud_fallback}{RESET}  {DIM}[ollama cloud]{RESET}"
+            else:
+                route_str = f"{RED}no model available{RESET}"
+            print(
+                f"  {DIM}»{RESET} {DIM}{prompt_text[:40]:<40}{RESET}  "
+                f"{PINK}→{RESET} {route_str}"
+            )
+            time.sleep(0.05)
         print(f"  {DIM}{'─' * 54}{RESET}\n")
 
     print(f"  {MAGENTA}{BOLD}▸ READY{RESET}")
     print(f"  {DIM}{'─' * 54}{RESET}")
     print(f"  {MATRIX}✓{RESET}  Config written   {DIM}~/.neuralbrok/config.yaml{RESET}")
-    print(f"  {MATRIX}✓{RESET}  Models ready     {DIM}{len(rec_models_names)} recommended{RESET}")
+    if rec_models_names:
+        print(f"  {MATRIX}✓{RESET}  Local models     {DIM}{len(rec_models_names)} recommended for your VRAM{RESET}")
+    if use_ollama_cloud and cloud_models_for_config:
+        print(f"  {MATRIX}✓{RESET}  Ollama Cloud     {CYAN}{cloud_models_for_config[0]}{RESET}  {DIM}+ {len(cloud_models_for_config)-1} more{RESET}")
+        print(f"  {DIM}     Route via:  model=""{cloud_models_for_config[0]}""{RESET}")
+    print(f"  {MATRIX}✓{RESET}  Routing mode     {DIM}{mode} — {'smart auto-selection enabled' if mode == 'smart' else 'change anytime in config.yaml'}{RESET}")
     print()
     print(f"  {PINK}{BOLD}$ neuralbrok start{RESET}")
     print()
     print(f"  {DIM}Proxy      http://localhost:8000/v1{RESET}")
     print(f"  {DIM}Dashboard  http://localhost:8000/dashboard{RESET}")
+    if use_ollama_cloud:
+        print(f"  {DIM}Recommend  http://localhost:8000/nb/recommend{RESET}")
     print(f"  {DIM}Docs       http://localhost:8000/docs{RESET}")
     print(f"  {DIM}Issues     github.com/khan-sha/neuralbroker/issues{RESET}")
     
@@ -1039,7 +1187,8 @@ def doctor():
                     name = m["name"]
                     size = m.get("size", 0) / (1024**3)
                     return True, f"{GREEN}✓ Model ready{RESET}  {name} ({size:.1f} GB)"
-                return "warn", f"{AMBER}⚠ No recommended models pulled{RESET}\n      → Run: ollama pull qwen3:8b"
+                def_model = resolve_model("default")
+                return "warn", f"{AMBER}⚠ No recommended models pulled{RESET}\n      → Run: ollama pull {def_model}"
         except:
             return False, ""
             
@@ -1049,7 +1198,7 @@ def doctor():
         passed += 1
     elif res and res[0] == "warn":
         print(f"  {AMBER}⚠ No recommended models pulled{RESET}")
-        print(f"      {DIM}→ Run: ollama pull qwen3:8b{RESET}")
+        print(f"      {DIM}→ Run: ollama pull {resolve_model('default')}{RESET}")
         warn += 1
     else:
         print(f"  {AMBER}⚠ Cannot check models (Ollama unreachable){RESET}")
@@ -1057,22 +1206,33 @@ def doctor():
         
     time.sleep(0.08)
     
-    # 4. VRAM telemetry
-    def check_vram():
-        try:
-            import pynvml
-            pynvml.nvmlInit()
-            pynvml.nvmlShutdown()
-            return True, f"{GREEN}✓ VRAM telemetry{RESET}  NVIDIA · pynvml"
-        except:
-            if sys.platform == "darwin":
-                return True, f"{GREEN}✓ VRAM telemetry{RESET}  Apple Silicon · Metal"
-            return "warn", f"{AMBER}⚠ No GPU detected{RESET}  CPU inference mode · cloud spillover always active"
+    # 4. Hardware Health & VRAM
+    def check_hardware_health():
+        from neuralbrok.detect import detect_device
+        from neuralbrok.ollama_catalog import assess_hardware
+        
+        prof = detect_device()
+        hw = assess_hardware(prof.vram_gb, prof.bandwidth_gbps)
+        
+        status = f"{hw['tier'].replace('_', ' ').capitalize()} tier"
+        if hw["tier"] in ("excellent", "good"):
+            return True, f"{GREEN}✓ Hardware Health{RESET}  {status} · {prof.vram_gb:.1f}GB VRAM · {prof.bandwidth_gbps:.0f}GB/s"
+        elif hw["tier"] == "mid":
+            return True, f"{PINK}◈ Hardware Health{RESET}  {status} · {prof.vram_gb:.1f}GB VRAM · Capable"
+        else:
+            msg = f"{RED}⚡ Hardware Health{RESET}  {status} · {prof.vram_gb:.1f}GB VRAM\n"
+            msg += f"      {AMBER}⚠  Device is below the 12GB VRAM performance threshold.{RESET}\n"
+            msg += f"      {DIM}   Local models may be slow or low quality.{RESET}\n"
+            msg += f"      {DIM}   Recommendation: Enable Ollama Cloud (run: neuralbrok models --cloud){RESET}"
+            return "warn", msg
             
-    res, exc = check_anim("VRAM telemetry       pynvml / Metal / fallback", check_vram)
+    res, exc = check_anim("Hardware Health      detecting VRAM & bandwidth...", check_hardware_health)
     if res and res[0] is True:
         print(f"  {res[1]}")
         passed += 1
+    elif res and res[0] == "warn":
+        print(f"  {res[1]}")
+        warn += 1
     else:
         print(f"  {res[1] if res else exc}")
         warn += 1
@@ -1134,7 +1294,8 @@ def doctor():
         def check_request():
             try:
                 with httpx.Client(timeout=10.0) as c:
-                    r = c.post("http://localhost:8000/v1/chat/completions", json={"model":"qwen3:8b", "messages":[{"role":"user","content":"reply with exactly three words"}]})
+                    test_model = resolve_model("default")
+                    r = c.post("http://localhost:8000/v1/chat/completions", json={"model": test_model, "messages":[{"role":"user","content":"reply with exactly three words"}]})
                     if r.status_code == 200:
                         be = r.headers.get("X-NB-Backend", "unknown")
                         cost = r.headers.get("X-NB-Cost", "$0.0")
@@ -1163,6 +1324,221 @@ def doctor():
         sys.exit(1)
     else:
         sys.exit(0)
+
+
+@main.command(name="models")
+@click.option("--workload", default="chat,coding,reasoning", help="Comma-separated workload tags.")
+@click.option("--cloud", is_flag=True, default=False, help="Show Ollama Cloud options only.")
+@click.option("--trending", is_flag=True, default=False, help="Show latest trending models from Ollama library.")
+def models_cmd(workload, cloud, trending):
+    """Show live model recommendations for your hardware.
+
+    Fetches the latest models from ollama.com, scores them against
+    your detected VRAM + bandwidth, and shows Ollama Cloud options
+    when your hardware can't run a model locally.
+
+    \b
+    Examples:
+      neuralbrok models
+      neuralbrok models --workload coding,math
+      neuralbrok models --cloud
+      neuralbrok models --trending
+    """
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
+
+    sys.stdout.write(CLEAR)
+    sys.stdout.flush()
+
+    print(f"  {MAGENTA}{BOLD}NEURAL{RESET}{PINK}{BOLD}BROKER{RESET}  {DIM}model catalog{RESET}\n")
+
+    # ── Detect hardware ───────────────────────────────────────────────────
+    sys.stdout.write(f"  {PINK}◐{RESET}  Detecting hardware...\r")
+    sys.stdout.flush()
+
+    profile = detect_device()
+    bw = getattr(profile, "bandwidth_gbps", None)
+    device_key = profile.gpu_model if profile.gpu_vendor != "none" else profile.platform
+
+    vram_str = f"{profile.vram_gb:.1f}GB VRAM" if profile.vram_gb > 0 else "CPU-only"
+    bw_str = f"  {DIM}·  {bw:.0f} GB/s bandwidth{RESET}" if bw else ""
+    sys.stdout.write(f"  {MATRIX}✓{RESET}  {PINK}{device_key}{RESET}  {DIM}{vram_str}{RESET}{bw_str}\n\n")
+    sys.stdout.flush()
+
+    from neuralbrok.ollama_catalog import (
+        fetch_latest_ollama_models, assess_hardware,
+        get_cloud_recommendations, get_runnable_local_models,
+    )
+    from neuralbrok.models import get_runnable_models, get_tok_per_sec
+    import asyncio
+
+    hw = assess_hardware(profile.vram_gb, bw)
+    workload_list = [w.strip() for w in workload.split(",") if w.strip()]
+
+    # ── Hardware assessment banner ────────────────────────────────────────
+    tier_colors = {
+        "excellent": MATRIX, "good": MATRIX,
+        "mid": PINK, "low": PINK, "very_low": RED, "cpu_only": RED,
+    }
+    tier_icons = {
+        "excellent": "✓", "good": "✓",
+        "mid": "◈", "low": "⚡", "very_low": "⚠", "cpu_only": "⚠",
+    }
+    tc = tier_colors.get(hw["tier"], DIM)
+    ti = tier_icons.get(hw["tier"], "·")
+    print(f"  {tc}{ti}{RESET}  {hw['message']}")
+    print(f"  {DIM}   {hw['speed_note']}{RESET}\n")
+
+    if not cloud and not trending:
+        # ── Local model recommendations ───────────────────────────────────
+        print(f"  {MAGENTA}{BOLD}▸ LOCAL MODELS{RESET}  {DIM}fit in your VRAM{RESET}")
+        print(f"  {DIM}{'─' * 60}{RESET}")
+
+        sys.stdout.write(f"  {PINK}◐{RESET}  Scanning installed + catalog...\r")
+        sys.stdout.flush()
+
+        from neuralbrok.models import build_model_catalog
+        live_catalog = asyncio.run(build_model_catalog(profile, show_progress=False))
+        runnable = get_runnable_models(
+            profile.vram_gb, profile.ram_gb, device_key,
+            models=live_catalog
+        )
+
+        sys.stdout.write(" " * 50 + "\r")
+        sys.stdout.flush()
+
+        if runnable:
+            total_vram = profile.vram_gb if profile.vram_gb > 0 else 8.0
+            print(f"  {DIM}  {'Model':<26} {'VRAM':<10} {'Tok/s':>6}  {'Caps':<24}  Status{RESET}")
+            print(f"  {DIM}{'─' * 78}{RESET}")
+            for m in runnable[:8]:
+                ev = m.vram_estimated_gb if m.vram_estimated_gb > 0 else m.vram_gb
+                bar = _get_vram_bar(ev, total_vram, width=8)
+
+                # Bandwidth-based speed estimate (whatmodels formula)
+                if bw:
+                    weight = m.weight_gb if m.weight_gb > 0 else m.vram_gb
+                    tps = bw / (weight + 1.0)
+                else:
+                    tps = get_tok_per_sec(m, device_key)
+
+                inst = f"{MATRIX}● installed{RESET}" if m.is_installed else f"{DIM}○ not pulled{RESET}"
+                caps = ",".join(m.capabilities[:3])
+                pull_hint = "" if m.is_installed else f"  {DIM}ollama pull {m.ollama_tag}{RESET}"
+                print(
+                    f"  {PINK}{m.name:<26}{RESET} {bar} {DIM}{tps:>5.0f}t/s{RESET}"
+                    f"  {DIM}{caps:<24}{RESET}  {inst}{pull_hint}"
+                )
+                time.sleep(0.03)
+
+            print(f"  {DIM}{'─' * 78}{RESET}")
+
+            # Best pick for this workload
+            from neuralbrok.selector import SmartModelSelector
+            sel = SmartModelSelector(device_key, profile.vram_gb, runnable)
+            best = sel.best_single(workload_list)
+            if best:
+                if bw:
+                    weight = best.weight_gb if best.weight_gb > 0 else best.vram_gb
+                    tps = bw / (weight + 1.0)
+                else:
+                    tps = get_tok_per_sec(best, device_key)
+                print(
+                    f"\n  {PINK}★  Best for [{workload}]:{RESET}  "
+                    f"{MATRIX}{best.name}{RESET}  "
+                    f"{DIM}~{tps:.0f} tok/s  {best.vram_gb:.1f}GB{RESET}"
+                )
+                if not best.is_installed:
+                    print(f"     {DIM}$ ollama pull {best.ollama_tag}{RESET}")
+        else:
+            print(f"  {RED}⚠  No models fit in your {profile.vram_gb:.1f}GB VRAM.{RESET}")
+            print(f"  {DIM}   See Ollama Cloud options below (run: neuralbrok models --cloud){RESET}")
+
+        print()
+
+    # ── Trending models from Ollama library ───────────────────────────────
+    if trending or (not cloud and hw["suggest_cloud"]):
+        print(f"  {MAGENTA}{BOLD}▸ TRENDING ON OLLAMA.COM{RESET}  {DIM}live · updated from ollama.com/library{RESET}")
+        print(f"  {DIM}{'─' * 60}{RESET}")
+
+        sys.stdout.write(f"  {PINK}◐{RESET}  Fetching latest from ollama.com...\r")
+        sys.stdout.flush()
+
+        live = fetch_latest_ollama_models(timeout=5.0)
+        live_runnable = get_runnable_local_models(profile.vram_gb, live)
+
+        sys.stdout.write(" " * 50 + "\r")
+        sys.stdout.flush()
+
+        if live_runnable:
+            print(f"  {DIM}  {'Model tag':<32} {'Params':<8} {'VRAM':>6}  Capabilities{RESET}")
+            print(f"  {DIM}{'─' * 70}{RESET}")
+            for m in live_runnable[:8]:
+                cap_str = ",".join(m.capabilities[:3])
+                print(
+                    f"  {CYAN}{m.tag:<32}{RESET}"
+                    f"  {DIM}{m.params_b:>5.1f}B{RESET}"
+                    f"  {DIM}{m.vram_gb:>5.1f}GB{RESET}"
+                    f"  {DIM}{cap_str}{RESET}"
+                )
+                if m.description:
+                    print(f"     {DIM}{m.description[:65]}{RESET}")
+                time.sleep(0.025)
+            print(f"  {DIM}{'─' * 70}{RESET}")
+            print(f"\n  {DIM}Pull any model: $ ollama pull <tag>{RESET}")
+        else:
+            print(f"  {DIM}No models fit your VRAM in the latest catalog.{RESET}")
+
+        if not live_runnable and live:
+            # Show all trending regardless of VRAM (cloud section will cover)
+            print(f"  {DIM}Top trending (require more VRAM or use cloud):{RESET}")
+            for m in live[:5]:
+                print(f"  {DIM}  · {CYAN}{m.tag:<32}{RESET} ~{m.vram_gb:.0f}GB")
+        print()
+
+    # ── Ollama Cloud section ──────────────────────────────────────────────
+    if cloud or hw["suggest_cloud"] or not get_runnable_local_models(profile.vram_gb, []):
+        cloud_recs = get_cloud_recommendations(profile.vram_gb, workload_list)
+
+        print(f"  {MAGENTA}{BOLD}▸ OLLAMA CLOUD{RESET}  {DIM}frontier models · no local VRAM needed{RESET}")
+        print(f"  {DIM}{'─' * 60}{RESET}")
+
+        if hw["tier"] in ("cpu_only", "very_low"):
+            print(f"  {RED}⚠  Recommended{RESET} — your hardware can't run quality models locally.")
+        elif hw["tier"] == "low":
+            print(f"  {PINK}◈  Optional{RESET} — complement your local setup with frontier models.")
+        else:
+            print(f"  {DIM}   Frontier models available on-demand via Ollama Cloud:{RESET}")
+
+        print()
+        print(f"  {DIM}  {'Model tag':<32} {'Size':<8}  {'Tier':<10}  Capabilities{RESET}")
+        print(f"  {DIM}{'─' * 70}{RESET}")
+
+        for i, cm in enumerate(cloud_recs[:5]):
+            star = f"{PINK}★{RESET}" if i == 0 else f"{DIM}·{RESET}"
+            tier_badge = f"{MAGENTA}flagship{RESET} " if cm.get("tier") == "flagship" else f"{DIM}standard{RESET}"
+            params = f"{cm['params_b']:.0f}B" if cm["params_b"] < 1000 else f"{cm['params_b']/1000:.0f}T"
+            cap_str = ",".join(cm["capabilities"][:4])
+            print(
+                f"  {star} {CYAN}{cm['tag']:<32}{RESET}"
+                f"  {DIM}{params:<8}{RESET}"
+                f"  {tier_badge:<10}"
+                f"  {DIM}{cap_str}{RESET}"
+            )
+            print(f"     {DIM}{cm['description'][:68]}{RESET}")
+            time.sleep(0.04)
+
+        print(f"  {DIM}{'─' * 70}{RESET}")
+        print(f"\n  {DIM}Usage (CLI):  $ ollama run {cloud_recs[0]['tag'] if cloud_recs else 'kimi-k2:cloud'}{RESET}")
+        print(f"  {DIM}Usage (API):  client.chat(model=\"{cloud_recs[0]['tag'] if cloud_recs else 'kimi-k2:cloud'}\", ...){RESET}")
+        print()
+        if hw["suggest_cloud"] and not cloud:
+            print(f"  {DIM}Enable cloud routing in setup: neuralbrok setup → answer 'y' to Ollama Cloud{RESET}")
+            print(f"  {DIM}Or use directly:               neuralbrok models --cloud{RESET}")
+
+    print()
 
 
 @main.command()

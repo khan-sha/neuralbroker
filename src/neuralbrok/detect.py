@@ -6,6 +6,9 @@ import psutil
 from dataclasses import dataclass
 from typing import List, Optional
 
+from neuralbrok.hardware import lookup_gpu
+from neuralbrok.models import resolve_model
+
 @dataclass
 class DeviceProfile:
     gpu_vendor: str  # nvidia, apple, amd, none
@@ -20,20 +23,21 @@ class DeviceProfile:
     recommended_models: List[str]
     recommended_vram_threshold: float
     estimated_electricity_tdp_watts: int
+    bandwidth_gbps: Optional[float] = None  # New field from whatmodels
 
 def _get_nvidia_recommendations(vram_gb: float) -> tuple[List[str], float]:
     if vram_gb < 6:
-        return ["qwen3:0.6b", "phi3:mini"], 0.80
+        return [resolve_model("small"), resolve_model("phi-4-mini")], 0.80
     elif vram_gb < 8:
-        return ["llama3.1:8b", "mistral:7b", "qwen3:8b"], 0.80
+        return [resolve_model("default"), resolve_model("coding"), resolve_model("reasoning")], 0.80
     elif vram_gb < 12:
-        return ["llama3.1:8b", "mistral:7b", "qwen3:8b", "deepseek-coder:6.7b"], 0.80
+        return [resolve_model("default"), resolve_model("coding"), resolve_model("reasoning"), "deepseek-coder:6.7b"], 0.80
     elif vram_gb < 16:
-        return ["llama3.1:8b", "mixtral:8x7b", "qwen3:14b"], 0.85
+        return [resolve_model("default"), resolve_model("coding_large"), resolve_model("qwen3:14b")], 0.85
     elif vram_gb < 24:
-        return ["llama3.1:70b", "qwen3:32b", "mixtral:8x7b"], 0.85
+        return [resolve_model("reasoning_large"), resolve_model("qwen3:32b")], 0.85
     else:
-        return ["llama3.1:70b", "qwen3:72b", "mixtral:8x22b"], 0.90
+        return [resolve_model("reasoning_large"), "llama3.1:70b", "qwen3:72b"], 0.90
 
 def _get_nvidia_tdp(model_name: str) -> int:
     name = model_name.upper()
@@ -90,6 +94,14 @@ def detect_device() -> DeviceProfile:
         tdp = _get_apple_chip_info(chip_name)
         models, _ = _get_nvidia_recommendations(ram_gb)
         
+        gpu_spec = lookup_gpu(chip_name)
+        bandwidth = None
+        if gpu_spec and gpu_spec.vram_options:
+            for opt in gpu_spec.vram_options:
+                if abs(opt["vram_gb"] - ram_gb) < 4:
+                    bandwidth = opt["bandwidth_gbps"]
+                    break
+        
         return DeviceProfile(
             gpu_vendor="apple",
             gpu_model=chip_name,
@@ -102,7 +114,8 @@ def detect_device() -> DeviceProfile:
             recommended_runtime="ollama",
             recommended_models=models,
             recommended_vram_threshold=0.75,
-            estimated_electricity_tdp_watts=tdp
+            estimated_electricity_tdp_watts=tdp,
+            bandwidth_gbps=bandwidth
         )
 
     # 2. Check NVIDIA via pynvml
@@ -126,6 +139,7 @@ def detect_device() -> DeviceProfile:
 
         tdp = _get_nvidia_tdp(gpu_name)
         models, threshold = _get_nvidia_recommendations(vram_gb)
+        gpu_spec = lookup_gpu(gpu_name)
 
         return DeviceProfile(
             gpu_vendor="nvidia",
@@ -139,7 +153,8 @@ def detect_device() -> DeviceProfile:
             recommended_runtime="ollama",
             recommended_models=models,
             recommended_vram_threshold=threshold,
-            estimated_electricity_tdp_watts=tdp
+            estimated_electricity_tdp_watts=tdp,
+            bandwidth_gbps=gpu_spec.bandwidth_gbps if gpu_spec else None
         )
     except Exception:
         pass

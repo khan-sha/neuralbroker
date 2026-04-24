@@ -25,6 +25,7 @@ from neuralbrok.config import load_config, Config
 from neuralbrok.types import OpenAIRequest, PolicyMode
 from neuralbrok.router import PolicyEngine, route_request
 from neuralbrok.telemetry import VramPoller
+from neuralbrok.models import resolve_model
 
 from neuralbrok import metrics as nb_metrics
 from neuralbrok.providers import (
@@ -564,6 +565,98 @@ async def health_check():
     }
 
 
+@app.get("/nb/recommend")
+async def nb_recommend(workload: str = "chat,coding,reasoning"):
+    """
+    Live model recommendations for your hardware.
+    Returns local models that fit in VRAM + Ollama Cloud options.
+    
+    Query params:
+        workload: comma-separated capabilities (chat, coding, math, vision, reasoning, rag, tools)
+    """
+    from neuralbrok.detect import detect_device
+    from neuralbrok.ollama_catalog import (
+        fetch_latest_ollama_models, assess_hardware,
+        get_cloud_recommendations, get_runnable_local_models,
+    )
+    from neuralbrok.models import get_runnable_models, FALLBACK_MODELS, get_tok_per_sec
+
+    wl = [w.strip() for w in workload.split(",") if w.strip()]
+    profile = detect_device()
+    hw = assess_hardware(profile.vram_gb, getattr(profile, "bandwidth_gbps", None))
+
+    # Local models
+    runnable = get_runnable_models(profile.vram_gb, profile.ram_gb, profile.gpu_model)
+    bw = getattr(profile, "bandwidth_gbps", None)
+    local_picks = []
+    for m in runnable[:6]:
+        weight = m.weight_gb if m.weight_gb > 0 else m.vram_gb
+        tps = (bw / (weight + 1.0)) if bw else get_tok_per_sec(m, profile.gpu_model)
+        local_picks.append({
+            "tag": m.name,
+            "params_b": m.params_b,
+            "vram_gb": m.vram_gb,
+            "est_tok_per_sec": round(tps, 1),
+            "capabilities": m.capabilities,
+            "is_installed": m.is_installed,
+            "run_cmd": f"ollama run {m.ollama_tag}",
+        })
+
+    # Ollama Cloud options
+    cloud_picks = []
+    if hw["suggest_cloud"] or not local_picks:
+        for cm in get_cloud_recommendations(profile.vram_gb, wl)[:4]:
+            cloud_picks.append({
+                "tag": cm["tag"],
+                "name": cm["name"],
+                "description": cm["description"],
+                "capabilities": cm["capabilities"],
+                "tier": cm["tier"],
+                "run_cmd": f"ollama run {cm['tag']}",
+                "api_model": cm["tag"],
+            })
+
+    # Live catalog from Ollama registry
+    try:
+        live = fetch_latest_ollama_models(timeout=3.0)
+        live_runnable = get_runnable_local_models(profile.vram_gb, live)
+        trending = [
+            {"tag": m.tag, "params_b": m.params_b, "vram_gb": round(m.vram_gb, 1),
+             "description": m.description[:80], "capabilities": m.capabilities}
+            for m in live_runnable[:5]
+        ]
+    except Exception:
+        trending = []
+
+    return {
+        "hardware": {
+            "gpu": profile.gpu_model,
+            "vram_gb": round(profile.vram_gb, 1),
+            "bandwidth_gbps": getattr(profile, "bandwidth_gbps", None),
+            "tier": hw["tier"],
+            "assessment": hw["message"],
+        },
+        "workload": wl,
+        "local_models": local_picks,
+        "ollama_cloud": cloud_picks,
+        "trending_local": trending,
+        "suggest_cloud": hw["suggest_cloud"],
+    }
+
+
+@app.get("/nb/hardware")
+async def nb_hardware():
+    """Detailed hardware profile from whatmodels logic."""
+    from neuralbrok.detect import detect_device
+    profile = detect_device()
+    return {
+        "model": profile.gpu_model,
+        "vendor": profile.gpu_vendor,
+        "vram_gb": round(profile.vram_gb, 1),
+        "bandwidth_gbps": profile.bandwidth_gbps,
+        "platform": profile.platform
+    }
+
 @app.get("/telemetry")
 async def telemetry():
     """Live VRAM snapshot from background poller. For debugging."""
@@ -643,8 +736,17 @@ async def onboarding_page():
 </style>
 </head>
 <body>
-<div class="container">
+  <div class="container">
   <h1><span class="logo">●</span> NeuralBroker Onboarding</h1>
+  
+  <div id="hw-profile" class="panel" style="margin-bottom: 30px; display: none;">
+    <div style="color: var(--ink-3); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 4px;">Detected Hardware</div>
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div id="hw-name" style="font-weight: 600; color: var(--accent);">Detecting...</div>
+      <div id="hw-bandwidth" class="mono" style="font-size: 0.9rem;">-- GB/s</div>
+    </div>
+  </div>
+
   <div class="timeline" id="timeline">
     
     <div class="step" id="step-config">
@@ -695,11 +797,20 @@ async def onboarding_page():
       const pRes = await fetch('/nb/providers');
       const pData = await pRes.json();
       
-      updateUI(hData, sData, pData);
+      const hwRes = await fetch('/nb/hardware');
+      const hwData = await hwRes.json();
+      
+      updateUI(hData, sData, pData, hwData);
     } catch (e) { console.error(e); }
   }
   
-  function updateUI(health, stats, providers) {
+  function updateUI(health, stats, providers, hardware) {
+    if (hardware && hardware.model) {
+      document.getElementById('hw-profile').style.display = 'block';
+      document.getElementById('hw-name').innerText = hardware.model;
+      document.getElementById('hw-bandwidth').innerText = (hardware.bandwidth_gbps ? hardware.bandwidth_gbps + ' GB/s' : 'Bandwidth unknown');
+    }
+
     // 1. Config
     const sc = document.getElementById('step-config');
     sc.className = 'step done';
@@ -769,7 +880,7 @@ async def onboarding_page():
             <div class="panel">
             $ curl http://localhost:8000/v1/chat/completions \\<br>
             &nbsp;&nbsp;-H "Content-Type: application/json" \\<br>
-            &nbsp;&nbsp;-d '{"model":"qwen3:8b","messages":[{"role":"user","content":"hello"}]}'
+            &nbsp;&nbsp;-d '{"model":"{resolve_model("default")}","messages":[{"role":"user","content":"hello"}]}'
             </div>
             <button id="btn-test" onclick="fireTest()">Send test request</button>
             <div id="test-response" class="panel"></div>
@@ -786,7 +897,7 @@ async def onboarding_page():
       const res = await fetch('/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'qwen3:8b', messages: [{role: 'user', content: 'reply with exactly three words'}], stream: false })
+        body: JSON.stringify({ model: '{resolve_model("default")}', messages: [{role: 'user', content: 'reply with exactly three words'}], stream: false })
       });
       const data = await res.json();
       const be = res.headers.get('X-NB-Backend');
@@ -994,6 +1105,33 @@ DASHBOARD_HTML = r'''<!doctype html>
   .prov-item .prov-name { color: var(--ink); font-weight: 500; }
   .prov-item .prov-type { color: var(--ink-4); font-size: 10px; }
 
+  /* Recommendations */
+  .rec-card {
+    background: var(--bg-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px; margin-bottom: 12px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  }
+  .rec-card.cloud { border-left: 4px solid var(--cool); }
+  .rec-card.local { border-left: 4px solid var(--accent); }
+  .rec-title { font-weight: 600; font-size: 13px; color: var(--ink); margin-bottom: 4px; display: flex; justify-content: space-between; }
+  .rec-desc { color: var(--ink-3); line-height: 1.4; margin-bottom: 8px; }
+  .rec-meta { display: flex; gap: 10px; color: var(--ink-4); font-size: 10px; }
+  .rec-badge { padding: 1px 6px; border-radius: 3px; background: var(--bg-3); color: var(--ink-2); }
+  
+  .hw-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 100px;
+    background: var(--bg-2); border: 1px solid var(--line);
+    font-size: 11px; color: var(--ink-2);
+    margin-bottom: 16px;
+  }
+  .hw-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+  .hw-tier { color: var(--accent); font-weight: 600; }
+
+  @media (max-width: 1200px) {
+    .grid { grid-template-columns: 280px 1fr; }
+    .panel:last-child { display: none; } /* Hide chart on smaller screens */
+  }
   @media (max-width: 900px) {
     .grid { grid-template-columns: 1fr; }
     .panel { border-right: none; border-bottom: 1px solid var(--line); }
@@ -1060,14 +1198,29 @@ DASHBOARD_HTML = r'''<!doctype html>
 
   <!-- Cost Chart Panel -->
   <div class="panel">
-    <div class="panel-head">Cumulative Cost</div>
+    <div class="panel-head">Hardware & Recommendations</div>
     <div class="panel-body">
-      <div class="chart-wrap">
-        <canvas class="chart-canvas" id="cost-chart"></canvas>
+      <div id="hw-info">
+        <div class="hw-badge">
+          <span class="dot"></span>
+          <span id="hw-model">Detecting hardware...</span>
+        </div>
+        <div id="hw-assessment" style="font-size: 12px; color: var(--ink-3); margin-bottom: 20px; line-height: 1.5;"></div>
       </div>
-      <div class="chart-legend">
-        <span class="local"><span class="dot"></span>Local (electricity)</span>
-        <span class="cloud"><span class="dot"></span>Cloud</span>
+
+      <div class="panel-head" style="padding-left:0; background:transparent; border-bottom:none; margin-bottom:10px;">Recommended Models</div>
+      <div id="recs-list">
+        <div class="feed-empty">Analyzing workload...</div>
+      </div>
+      
+      <div style="margin-top:20px;">
+        <div class="chart-wrap" style="height: 140px;">
+          <canvas class="chart-canvas" id="cost-chart"></canvas>
+        </div>
+        <div class="chart-legend">
+          <span class="local"><span class="dot"></span>Local (elec)</span>
+          <span class="cloud"><span class="dot"></span>Cloud</span>
+        </div>
       </div>
     </div>
   </div>
