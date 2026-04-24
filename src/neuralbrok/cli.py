@@ -727,16 +727,17 @@ def start(port, host, config, mode=None):
     """Start the NeuralBroker daemon."""
     sys.stdout.write(CLEAR)
     sys.stdout.flush()
-    
-    top_border = f"  ╔══════════════════════════════════════════════════════════╗"
-    title_line = f"  ║   {WHITE}{BOLD}Neural{RESET}{AMBER}{BOLD}Broker{RESET}                                            ║"
-    version_line = f"  ║   v0.4.1                                                 ║"
-    bottom_border = f"  ╚══════════════════════════════════════════════════════════╝"
 
-    print(top_border)
-    print(title_line)
-    print(version_line)
-    print(bottom_border)
+    # Pink Matrix startup splash
+    W = "═" * 58
+    print(f"  {DIM}╔{W}╗{RESET}")
+    print(f"  {DIM}║{RESET}  {DIM}01101110 01100101 01110101 01110010 01100001 01101100{RESET}  {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {MAGENTA}{BOLD}NEURAL{RESET}{PINK}{BOLD}BROKER{RESET}                                          {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}           {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}v0.4.1  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
+    print(f"  {DIM}╚{W}╝{RESET}")
     print()
     
     config_path = config
@@ -758,11 +759,11 @@ def start(port, host, config, mode=None):
         end = time.time() + duration
         idx = 0
         while time.time() < end:
-            sys.stdout.write(f"  {AMBER}{spinners[idx]}{RESET}  {msg}\r")
+            sys.stdout.write(f"  {MAGENTA}{spinners[idx]}{RESET}  {msg}\r")
             sys.stdout.flush()
             idx = (idx + 1) % 4
             time.sleep(0.1)
-        sys.stdout.write(f"  {GREEN}✓{RESET}  {msg}\n")
+        sys.stdout.write(f"  {MATRIX}✓{RESET}  {msg}\n")
         sys.stdout.flush()
         time.sleep(0.08)
 
