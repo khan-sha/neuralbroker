@@ -284,14 +284,23 @@ pytest -q
 
 ## Roadmap
 
+### Phase 1 (BETA)
+- [ ] **Claude Code terminal connection** — `neuralbrok code` runs NeuralBroker-aware Claude Code shell with routing context
 - [ ] Dashboard v2 — live routing waterfall, model switching, per-provider cost graph
 - [ ] `neuralbrok doctor` — diagnose config issues, test provider connectivity, benchmark local models
+
+### Phase 2
+- [ ] **Hermes agent integration** — deploy autonomous agents that use NeuralBroker for model selection and routing
+- [ ] **Openclaw integration** — connect Openclaw orchestrator to NeuralBroker for decentralized agent coordination
 - [ ] Prompt caching integration — detect repeated system prompts and route to providers with cache discount
 - [ ] Per-model cost tracking — log actual token spend per model per day with budget alerts
+
+### Phase 3
 - [ ] Dynamic provider weighting — auto-demote slow or error-prone providers without manual config changes
 - [ ] Fine-grained routing rules — route by model name, tag, or regex in config.yaml
 - [ ] GGUF download helper — pull and register quantized models from HuggingFace directly from CLI
 - [ ] Multi-GPU support — VRAM aggregation and per-GPU model pinning for multi-card setups
+- [ ] **Multi-agent framework support** — extend to Anthropic Managed Agents, LangGraph, CrewAI
 
 ---
 

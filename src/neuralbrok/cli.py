@@ -1222,6 +1222,42 @@ def benchmark(model):
         _json.dump(results, f, indent=2)
     print(f"  {GREEN}✓{RESET} Saved baseline → {baseline_path}")
 
+@main.command()
+@click.option("--host", default="localhost", help="NeuralBroker host")
+@click.option("--port", default=8000, help="NeuralBroker port")
+@click.option("--watch", is_flag=True, help="Stream routing decisions in real-time")
+def code(host, port, watch):
+    """Connect Claude Code to NeuralBroker routing context (BETA)."""
+    import asyncio
+    from neuralbrok.integrations import launch_code_with_routing_context
+
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
+
+    sys.stdout.write(CLEAR)
+    sys.stdout.flush()
+
+    W = "═" * 58
+    print(f"  {DIM}╔{W}╗{RESET}")
+    print(f"  {DIM}║{RESET}  {DIM}01100011 01101100 01100001 01110101 01100100 01100101{RESET}  {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {MAGENTA}{BOLD}CLAUDE{RESET}{PINK}{BOLD}CODE{RESET}  ⟷  {MAGENTA}NEURAL{RESET}{PINK}BROKER{RESET}                  {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}Real-time routing context · BETA integration{RESET}      {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}Connecting to {host}:{port}{RESET}                                {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
+    print(f"  {DIM}╚{W}╝{RESET}")
+    print()
+
+    try:
+        asyncio.run(launch_code_with_routing_context(host, port, watch))
+    except KeyboardInterrupt:
+        print(f"\n\n  {MATRIX}✓{RESET} Claude Code terminal closed.\n")
+    except Exception as e:
+        print(f"\n  {RED}✗ Error: {e}{RESET}\n")
+        sys.exit(1)
+
 def _cli_entry():
     try:
         main(standalone_mode=False)
