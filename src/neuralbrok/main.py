@@ -263,7 +263,7 @@ async def lifespan(app: FastAPI):
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="NeuralBroker", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="NeuralBroker", version="0.5.3", lifespan=lifespan)
 
 
 # ── Auth Helper ───────────────────────────────────────────────────────────────
