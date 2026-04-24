@@ -11,7 +11,7 @@ import httpx
 import yaml
 from pathlib import Path
 
-from neuralbrok.config import load_config, generate_config
+from neuralbrok.config import load_config
 from neuralbrok.detect import detect_device
 from neuralbrok.models import resolve_model
 from neuralbrok.autoconfig import generate_config
