@@ -84,7 +84,7 @@ def detect_device() -> DeviceProfile:
     ram_gb = ram_bytes / (1024**3)
     cpu_cores = psutil.cpu_count(logical=False) or psutil.cpu_count(logical=True) or 4
 
-    # 1. Check Apple Silicon
+    # 1. Check Apple Silicon (High Priority)
     if plat == "macos" and "arm" in platform.processor().lower():
         try:
             chip_name = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, check=True).stdout.strip()
@@ -92,7 +92,7 @@ def detect_device() -> DeviceProfile:
             chip_name = "Apple Silicon"
         
         tdp = _get_apple_chip_info(chip_name)
-        models, _ = _get_nvidia_recommendations(ram_gb)
+        models, _ = _get_nvidia_recommendations(ram_gb) # Unified recommendations
         
         gpu_spec = lookup_gpu(chip_name)
         bandwidth = None
@@ -103,106 +103,65 @@ def detect_device() -> DeviceProfile:
                     break
         
         return DeviceProfile(
-            gpu_vendor="apple",
-            gpu_model=chip_name,
-            vram_gb=ram_gb,
-            ram_gb=ram_gb,
-            cpu_cores=cpu_cores,
-            platform=plat,
-            cuda_version=None,
-            metal_support=True,
-            recommended_runtime="ollama",
-            recommended_models=models,
-            recommended_vram_threshold=0.75,
-            estimated_electricity_tdp_watts=tdp,
-            bandwidth_gbps=bandwidth
+            gpu_vendor="apple", gpu_model=chip_name, vram_gb=ram_gb, ram_gb=ram_gb,
+            cpu_cores=cpu_cores, platform=plat, cuda_version=None,
+            metal_support=True, recommended_runtime="ollama",
+            recommended_models=models, recommended_vram_threshold=0.75,
+            estimated_electricity_tdp_watts=tdp, bandwidth_gbps=bandwidth
         )
 
-    # 2. Check NVIDIA via pynvml
-    try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*deprecated.*")
-            import pynvml
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        gpu_name = pynvml.nvmlDeviceGetName(handle)
-        if isinstance(gpu_name, bytes):
-            gpu_name = gpu_name.decode("utf-8")
-        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        vram_gb = info.total / (1024**3)
+    # ── Unified Telemetry Detection ──────────────────────────────────
+    from neuralbrok.hardware import HardwareTelemetry, lookup_gpu
+    telemetry = HardwareTelemetry()
+    vendor = telemetry.initialize()
+    
+    if vendor == "nvidia":
+        stats = telemetry.get_vram_snapshot(0)
+        vram_gb = stats["used"] + stats["free"]
+        
+        gpu_name = "NVIDIA GPU"
         try:
-            cuda_ver = pynvml.nvmlSystemGetCudaDriverVersion()
+            if hasattr(telemetry, "_pynvml") and telemetry._pynvml:
+                handle = telemetry._pynvml.nvmlDeviceGetHandleByIndex(0)
+                gpu_name = telemetry._pynvml.nvmlDeviceGetName(handle)
+                if isinstance(gpu_name, bytes): gpu_name = gpu_name.decode("utf-8")
+        except: pass
+
+        try:
+            cuda_ver = telemetry._pynvml.nvmlSystemGetCudaDriverVersion()
             cuda_version = f"{cuda_ver // 1000}.{(cuda_ver % 1000) // 10}"
         except:
             cuda_version = "Unknown"
-        pynvml.nvmlShutdown()
 
         tdp = _get_nvidia_tdp(gpu_name)
         models, threshold = _get_nvidia_recommendations(vram_gb)
         gpu_spec = lookup_gpu(gpu_name)
+        bandwidth = gpu_spec.bandwidth_gbps if gpu_spec else 360.0
 
+        telemetry.shutdown()
         return DeviceProfile(
-            gpu_vendor="nvidia",
-            gpu_model=gpu_name,
-            vram_gb=vram_gb,
-            ram_gb=ram_gb,
-            cpu_cores=cpu_cores,
-            platform=plat,
-            cuda_version=cuda_version,
-            metal_support=False,
-            recommended_runtime="ollama",
-            recommended_models=models,
-            recommended_vram_threshold=threshold,
-            estimated_electricity_tdp_watts=tdp,
-            bandwidth_gbps=gpu_spec.bandwidth_gbps if gpu_spec else None
+            gpu_vendor="nvidia", gpu_model=gpu_name, vram_gb=vram_gb, ram_gb=ram_gb,
+            cpu_cores=cpu_cores, platform=plat, cuda_version=cuda_version,
+            metal_support=False, recommended_runtime="ollama",
+            recommended_models=models, recommended_vram_threshold=threshold,
+            estimated_electricity_tdp_watts=tdp, bandwidth_gbps=bandwidth
         )
-    except Exception:
-        pass
-
-    # 3. Check AMD via rocm-smi
-    try:
-        if plat == "linux":
-            # Try to get detailed GPU info
-            try:
-                gpu_info = subprocess.run(["rocm-smi", "--json"], capture_output=True, text=True, check=True).stdout
-                import json
-                data = json.loads(gpu_info)
-                if data and isinstance(data, list) and len(data) > 0:
-                    gpu_data = data[0]
-                    gpu_name = gpu_data.get("Product Name", "AMD Radeon GPU")
-                    vram_gb = float(gpu_data.get("Max Clock", 0)) / 1000.0 if "VRAM" in gpu_data else 16.0
-                else:
-                    gpu_name = "AMD Radeon GPU (ROCm)"
-                    vram_gb = 16.0
-            except:
-                # Fallback: try rocm-smi --showid
-                try:
-                    dev_list = subprocess.run(["rocm-smi", "--showid"], capture_output=True, text=True, check=True).stdout
-                    gpu_name = "AMD Radeon GPU" if dev_list and "GPU" in dev_list else "AMD GPU (ROCm)"
-                    vram_gb = 16.0  # Safe default
-                except:
-                    gpu_name = "AMD Radeon GPU (ROCm)"
-                    vram_gb = 16.0
-
-            tdp = _get_amd_tdp(gpu_name)
-            models, threshold = _get_nvidia_recommendations(vram_gb)
-
-            return DeviceProfile(
-                gpu_vendor="amd",
-                gpu_model=gpu_name,
-                vram_gb=vram_gb,
-                ram_gb=ram_gb,
-                cpu_cores=cpu_cores,
-                platform=plat,
-                cuda_version=None,
-                metal_support=False,
-                recommended_runtime="llama_cpp",
-                recommended_models=models,
-                recommended_vram_threshold=threshold,
-                estimated_electricity_tdp_watts=tdp
-            )
-    except Exception:
-        pass
+    
+    elif vendor == "amd":
+        stats = telemetry.get_vram_snapshot(0)
+        vram_gb = stats["used"] + stats["free"]
+        gpu_name = "AMD Radeon GPU"
+        
+        models, threshold = _get_nvidia_recommendations(vram_gb)
+        
+        telemetry.shutdown()
+        return DeviceProfile(
+            gpu_vendor="amd", gpu_model=gpu_name, vram_gb=vram_gb, ram_gb=ram_gb,
+            cpu_cores=cpu_cores, platform=plat, cuda_version=None,
+            metal_support=False, recommended_runtime="ollama",
+            recommended_models=models, recommended_vram_threshold=threshold,
+            estimated_electricity_tdp_watts=200, bandwidth_gbps=512.0
+        )
 
     # 4. CPU only fallback
     return DeviceProfile(
@@ -214,8 +173,9 @@ def detect_device() -> DeviceProfile:
         platform=plat,
         cuda_version=None,
         metal_support=False,
-        recommended_runtime="llama_cpp",
-        recommended_models=["qwen3:0.6b", "phi3:mini", "llama3.2:1b"],
+        recommended_runtime="ollama",
+        recommended_models=[resolve_model("small"), resolve_model("phi-4-mini")],
         recommended_vram_threshold=1.0,
-        estimated_electricity_tdp_watts=65
+        estimated_electricity_tdp_watts=65,
+        bandwidth_gbps=40.0
     )
