@@ -12,6 +12,7 @@ import httpx
 import yaml
 from pathlib import Path
 
+from neuralbrok import __version__
 from neuralbrok.config import load_config
 from neuralbrok.detect import detect_device
 from neuralbrok.models import resolve_model
@@ -105,6 +106,7 @@ class DynamicIntegrationGroup(click.Group):
         return None
 
 @click.group(cls=DynamicIntegrationGroup)
+@click.version_option(__version__, "--version", "-V", message="neuralbrok %(version)s")
 def main():
     """NeuralBroker CLI — VRAM-aware LLM routing."""
     if sys.platform == "win32":
@@ -2063,6 +2065,12 @@ def list_cmd(url, show_all):
 
 
 def _cli_entry():
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except AttributeError:
+            pass
     try:
         main(standalone_mode=False)
     except KeyboardInterrupt:
@@ -2071,7 +2079,7 @@ def _cli_entry():
     except SystemExit as e:
         sys.exit(e.code)
     except Exception as e:
-        print(f"\n  {RED}✗ Unexpected error: {e}{RESET}")
+        print(f"\n  {RED}x Unexpected error: {e}{RESET}")
         sys.exit(1)
 
 if __name__ == "__main__":
