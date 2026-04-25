@@ -232,6 +232,33 @@ async def build_model_catalog(device_profile, host: str = "localhost:11434", sho
             vram_estimated_gb=vram_est
         )
         result.append(new_model)
+        
+    # 2026 Addition: Include any locally installed models that are not in the hardcoded list
+    cataloged_names = {m.name for m in FALLBACK_MODELS}
+    for local in local_models:
+        if local["name"] not in cataloged_names:
+            size_bytes = local.get("size_bytes", 0)
+            vram_est = estimate_vram_from_size(size_bytes)
+            # Estimate params based on typical 4-bit quantization (~0.7 GB per 1B)
+            params_est = round(vram_est / 0.7, 1)
+            
+            result.append(ModelProfile(
+                name=local["name"],
+                family="local",
+                params_b=params_est,
+                quant="unknown",
+                vram_gb=vram_est,
+                ram_gb=vram_est * 2,
+                ctx_k=128,
+                tok_per_sec_gpu={},
+                tok_per_sec_cpu=1.5,
+                capabilities=["chat"],
+                recommended_for=["chat"],
+                ollama_tag=local["name"],
+                notes="Custom local model",
+                is_installed=True,
+                vram_estimated_gb=vram_est
+            ))
 
     return result
 
@@ -291,7 +318,7 @@ def get_runnable_models(vram_gb: float, ram_gb: float, device_key: str, is_lapto
         # Precision routing: assume 4k context for safety check, or use model's max if it's a tight fit
         vram_needed = estimate_vram_requirement(model, context_k=4) 
         
-        if vram_gb > 0 and vram_needed > usable_vram:
+        if vram_gb > 0 and vram_needed > usable_vram and not model.is_installed:
             continue
 
         is_moe = "a" in model.name and "-" in model.name

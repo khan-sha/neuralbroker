@@ -102,7 +102,7 @@ def setup():
     # tagline (4sp + 44chars + 10sp = 58)
     print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}          {DIM}║{RESET}")
     # version (4sp + 51chars + 3sp = 58)
-    print(f"  {DIM}║{RESET}    {DIM}v0.6.2  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}v0.6.3  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
     # blank (58 spaces)
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     # hint (4sp + 27chars + 27sp = 58)
@@ -347,54 +347,52 @@ def setup():
     cloud_models_for_config = []
     use_ollama_cloud = False
 
-    if suggest_cloud:
-        cloud_recs = get_cloud_recommendations(profile.vram_gb, workload_categories)
+    # ── Ollama Cloud fallback (Always offered) ─────────────────────────────
+    cloud_recs = get_cloud_recommendations(profile.vram_gb, workload_categories)
+    use_ollama_cloud = False
+    cloud_models_for_config = []
 
-        if hw_tier in ("cpu_only", "very_low"):
-            advisory_header = f"  {RED}⚠  Your device cannot run quality LLMs locally.{RESET}"
-            advisory_body = f"  {DIM}   Ollama Cloud lets you run frontier models (Kimi K2, Llama 4){RESET}"
-            advisory_body2 = f"  {DIM}   instantly — no VRAM needed, billed per token.{RESET}"
-        else:
-            advisory_header = f"  {PINK}◈  Your device can run local models, but Ollama Cloud{RESET}"
-            advisory_body  = f"  {DIM}   gives you access to frontier models (1T+ param) when{RESET}"
-            advisory_body2 = f"  {DIM}   your local models aren't enough for the task.{RESET}"
+    if hw_tier in ("cpu_only", "very_low") or suggest_cloud:
+        advisory_header = f"  {RED}⚠  Your device might struggle with large local models.{RESET}"
+        advisory_body = f"  {DIM}   Ollama Cloud lets you run frontier models (Kimi K2, Llama 4){RESET}"
+        advisory_body2 = f"  {DIM}   instantly — no VRAM needed, billed per token.{RESET}"
+    else:
+        advisory_header = f"  {MATRIX}✓  Your hardware is great for local models.{RESET}"
+        advisory_body  = f"  {DIM}   However, Ollama Cloud gives you access to 1T+ parameter{RESET}"
+        advisory_body2 = f"  {DIM}   frontier models when local ones fall short.{RESET}"
 
-        print(f"  {MAGENTA}{BOLD}▸ OLLAMA CLOUD OPTION{RESET}")
-        print(f"  {DIM}{'─' * 54}{RESET}")
-        print(advisory_header)
-        print(advisory_body)
-        print(advisory_body2)
-        print()
-        print(f"  {DIM}Top cloud models for your workload:{RESET}")
-        for i, cm in enumerate(cloud_recs[:4]):
-            star = f"{PINK}★{RESET}" if i == 0 else f"{DIM}·{RESET}"
-            tier_badge = f"{MAGENTA}[flagship]{RESET}" if cm.get("tier") == "flagship" else f"{DIM}[standard]{RESET}"
-            print(f"  {star} {CYAN}{cm['tag']:<32}{RESET} {tier_badge}")
-            print(f"     {DIM}{cm['description'][:70]}{RESET}")
-            time.sleep(0.04)
+    print(f"  {MAGENTA}{BOLD}▸ OLLAMA CLOUD OPTION{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    print(advisory_header)
+    print(advisory_body)
+    print(advisory_body2)
+    print()
+    print(f"  {DIM}Top cloud models for your workload:{RESET}")
+    for i, cm in enumerate(cloud_recs[:4]):
+        star = f"{PINK}★{RESET}" if i == 0 else f"{DIM}·{RESET}"
+        tier_badge = f"{MAGENTA}[flagship]{RESET}" if cm.get("tier") == "flagship" else f"{DIM}[standard]{RESET}"
+        print(f"  {star} {CYAN}{cm['tag']:<32}{RESET} {tier_badge}")
+        print(f"     {DIM}{cm['description'][:70]}{RESET}")
+        time.sleep(0.04)
 
-        print()
-        print(f"  {DIM}Example usage:{RESET}")
-        if cloud_recs:
-            print(f"  {DIM}  $ ollama run {cloud_recs[0]['tag']}{RESET}")
-        print(f"  {DIM}  or via API:  model=""{cloud_recs[0]['tag'] if cloud_recs else 'kimi-k2:cloud'}""{RESET}")
-        print(f"  {DIM}{'─' * 54}{RESET}")
+    print()
+    print(f"  {DIM}{'─' * 54}{RESET}")
 
-        try:
-            sys.stdout.write(
-                f"\n  {PINK}→{RESET}  Enable Ollama Cloud fallback in routing? {DIM}[y/n]{RESET}:  "
-            )
-            sys.stdout.flush()
-            cloud_ans = input().strip().lower()
-        except KeyboardInterrupt:
-            cloud_ans = "n"
+    try:
+        sys.stdout.write(
+            f"\n  {PINK}→{RESET}  Enable Ollama Cloud fallback? {DIM}[y/N]{RESET}:  "
+        )
+        sys.stdout.flush()
+        cloud_ans = input().strip().lower()
+    except KeyboardInterrupt:
+        cloud_ans = "n"
 
-        if cloud_ans == "y":
-            use_ollama_cloud = True
-            cloud_models_for_config = [cm["tag"] for cm in cloud_recs[:3]]
-            print(f"  {MATRIX}✓{RESET} Ollama Cloud enabled — will route to cloud when local models fall short\n")
-        else:
-            print(f"  {DIM}Cloud skipped — you can enable later in config.yaml{RESET}\n")
+    if cloud_ans == "y":
+        use_ollama_cloud = True
+        cloud_models_for_config = [cm["tag"] for cm in cloud_recs[:3]]
+        print(f"  {MATRIX}✓{RESET} Ollama Cloud enabled — fallback active\n")
+    else:
+        print(f"  {DIM}Cloud skipped — local-only mode{RESET}\n")
 
     # ── Model selection (manual or auto) ───────────────────────────────────
     selector = SmartModelSelector(device_key, profile.vram_gb, runnable)
