@@ -15,6 +15,7 @@ class AgentIntegration:
     env_vars: Dict[str, str] = field(default_factory=dict)  # env var name → description
     skill_path: Optional[str] = None # for Phase 2 skill-file agents
     setup_fn: Optional[Callable] = None # _setup_<slug>(project_dir, nb_url, api_key, global_dir, dry_run, force) -> list[Path]
+    launch_cmd: Optional[str] = None # CLI command to launch this agent
 
 def _nb_url(config=None) -> str:
     """Reads server.host/server.port from loaded config, falls back to http://localhost:8000"""
@@ -285,18 +286,18 @@ PHASE_2_SPECS = [
 ]
 
 AGENT_REGISTRY: Dict[str, AgentIntegration] = {
-    "claude-code": AgentIntegration("Claude Code", "claude-code", 1, [".claude/settings.json", "CLAUDE.md"], setup_fn=_setup_claude_code),
-    "cursor": AgentIntegration("Cursor", "cursor", 1, [".cursor/mcp.json", ".env"], setup_fn=_setup_cursor),
-    "cline": AgentIntegration("Cline", "cline", 1, [".cline/settings.json"], setup_fn=_setup_cline),
-    "github-copilot": AgentIntegration("GitHub Copilot", "github-copilot", 1, [".github/copilot-instructions.md", ".vscode/settings.json"], setup_fn=_setup_github_copilot),
-    "gemini-cli": AgentIntegration("Gemini CLI", "gemini-cli", 1, [".gemini/settings.json"], setup_fn=_setup_gemini_cli),
-    "opencode": AgentIntegration("OpenCode", "opencode", 1, ["opencode.json"], setup_fn=_setup_opencode),
-    "warp": AgentIntegration("Warp", "warp", 1, ["~/.warp/preferences.yaml"], setup_fn=_setup_warp),
-    "codex": AgentIntegration("Codex", "codex", 1, [".env", "~/.codex/config.json"], setup_fn=_setup_codex),
-    "amp": AgentIntegration("Amp", "amp", 1, ["~/.amp/config.json"], setup_fn=_setup_amp),
-    "kimi-code": AgentIntegration("Kimi Code", "kimi-code", 1, [".kimi/config.json", ".env"], setup_fn=_setup_kimi_code),
-    "firebender": AgentIntegration("Firebender", "firebender", 1, [".firebender/config.json"], setup_fn=_setup_firebender),
-    "deep-agents": AgentIntegration("Deep Agents", "deep-agents", 1, [".deepagent/config.json", ".antigravity/config.json"], setup_fn=_setup_deep_agents),
+    "claude-code": AgentIntegration("Claude Code", "claude-code", 1, [".claude/settings.json", "CLAUDE.md"], setup_fn=_setup_claude_code, launch_cmd="claude"),
+    "cursor": AgentIntegration("Cursor", "cursor", 1, [".cursor/mcp.json", ".env"], setup_fn=_setup_cursor, launch_cmd="cursor"),
+    "cline": AgentIntegration("Cline", "cline", 1, [".cline/settings.json"], setup_fn=_setup_cline, launch_cmd="cline"),
+    "github-copilot": AgentIntegration("GitHub Copilot", "github-copilot", 1, [".github/copilot-instructions.md", ".vscode/settings.json"], setup_fn=_setup_github_copilot, launch_cmd="code"),
+    "gemini-cli": AgentIntegration("Gemini CLI", "gemini-cli", 1, [".gemini/settings.json"], setup_fn=_setup_gemini_cli, launch_cmd="gemini"),
+    "opencode": AgentIntegration("OpenCode", "opencode", 1, ["opencode.json"], setup_fn=_setup_opencode, launch_cmd="opencode"),
+    "warp": AgentIntegration("Warp", "warp", 1, ["~/.warp/preferences.yaml"], setup_fn=_setup_warp, launch_cmd="warp"),
+    "codex": AgentIntegration("Codex", "codex", 1, [".env", "~/.codex/config.json"], setup_fn=_setup_codex, launch_cmd="codex"),
+    "amp": AgentIntegration("Amp", "amp", 1, ["~/.amp/config.json"], setup_fn=_setup_amp, launch_cmd="amp"),
+    "kimi-code": AgentIntegration("Kimi Code", "kimi-code", 1, [".kimi/config.json", ".env"], setup_fn=_setup_kimi_code, launch_cmd="kimi"),
+    "firebender": AgentIntegration("Firebender", "firebender", 1, [".firebender/config.json"], setup_fn=_setup_firebender, launch_cmd="firebender"),
+    "deep-agents": AgentIntegration("Deep Agents", "deep-agents", 1, [".deepagent/config.json", ".antigravity/config.json"], setup_fn=_setup_deep_agents, launch_cmd="deepagent"),
 }
 
 # Add Phase 2 agents to registry

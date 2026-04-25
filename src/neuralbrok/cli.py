@@ -66,7 +66,34 @@ def _matrix_line(width: int = 55) -> str:
     chars = "01█▓░─╌┄"
     return DIM + "".join(random.choice(chars) for _ in range(width)) + RESET
 
-@click.group()
+class DynamicIntegrationGroup(click.Group):
+    """Custom Click group that dynamically adds agent launch commands."""
+    def list_commands(self, ctx):
+        return super().list_commands(ctx) + list(AGENT_REGISTRY.keys())
+
+    def get_command(self, ctx, name):
+        cmd = super().get_command(ctx, name)
+        if cmd is not None:
+            return cmd
+        
+        if name in AGENT_REGISTRY:
+            agent = AGENT_REGISTRY[name]
+            if agent.launch_cmd:
+                @click.command(name=name, help=f"Launch {agent.name} integration.")
+                @click.pass_context
+                def _launch(ctx):
+                    sys.stdout.write(f"  {PINK}▸{RESET} Launching {PINK}{agent.name}{RESET}...\n")
+                    sys.stdout.flush()
+                    try:
+                        # For Windows, we might need 'start' or similar, but shell=True usually works for PATH commands
+                        subprocess.run(agent.launch_cmd, shell=True)
+                    except Exception as e:
+                        sys.stdout.write(f"  {RED}✗{RESET} Failed to launch: {e}\n")
+                    sys.stdout.flush()
+                return _launch
+        return None
+
+@click.group(cls=DynamicIntegrationGroup)
 def main():
     """NeuralBroker CLI — VRAM-aware LLM routing."""
     if sys.platform == "win32":
@@ -102,7 +129,7 @@ def setup():
     # tagline (4sp + 44chars + 10sp = 58)
     print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}          {DIM}║{RESET}")
     # version (4sp + 51chars + 3sp = 58)
-    print(f"  {DIM}║{RESET}    {DIM}v0.6.3  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}v0.6.4  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
     # blank (58 spaces)
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     # hint (4sp + 27chars + 27sp = 58)
