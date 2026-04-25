@@ -336,14 +336,22 @@ class PolicyEngine:
         scored.sort(key=lambda s: s.score, reverse=True)
 
         # Pick winner and build fallback chain
-        winner = scored[0] if scored else None
+        if not scored:
+            logger.error("No providers available after scoring")
+            return RouteDecision(
+                backend_chosen="",
+                fallback_chain=[],
+                reason="no providers available",
+                latency_ms=(time.perf_counter() - start) * 1000,
+            )
+        winner = scored[0]
         fallback_chain = [s.name for s in scored[1:] if not s.failed]
 
         reason = self._explain_decision(winner, vram_util)
         latency_ms = (time.perf_counter() - start) * 1000
 
         decision = RouteDecision(
-            backend_chosen=winner.name if winner else "",
+            backend_chosen=winner.name,
             fallback_chain=fallback_chain,
             vram_at_decision=vram,
             policy_mode=self.mode,

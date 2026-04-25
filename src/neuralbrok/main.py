@@ -153,9 +153,14 @@ async def lifespan(app: FastAPI):
         try:
             config = load_config(config_path)
         except Exception as e:
-            logger.warning(f"Failed to load config from {config_path}: {e}")
-            from neuralbrok.config import Config
-            config = Config()
+            logger.error(f"Failed to load config from {config_path}: {e}")
+            print(f"NeuralBroker: Config validation failed at {config_path}")
+            print(f"Error: {e}")
+            print("\nPlease check your config file. Common issues:")
+            print("  - YAML syntax errors (check indentation)")
+            print("  - Field names: use 'runtime' not 'type', 'vram_poll_interval_seconds' not 'vram_poll_interval'")
+            print("  - Missing required fields (local_nodes, routing)")
+            raise SystemExit(1)
 
     # Start background VRAM poller (only if NOT on Vercel)
     if not os.getenv("VERCEL"):
