@@ -1,17 +1,20 @@
 """
-NeuralBroker Claude Code Terminal Integration (BETA)
+NeuralBroker Claude Code Terminal Integration
 
 Provides real-time routing context and model selection to Claude Code.
 Enables `neuralbrok code` command to launch Claude Code with NeuralBroker awareness.
 
 Usage:
-  neuralbrok code          # Launch Claude Code with NeuralBroker routing context
-  neuralbrok code --watch  # Watch routing decisions in real-time
+  neuralbrok code          # Show routing context then launch Claude Code via NeuralBroker
+  neuralbrok code --watch  # Stream routing decisions while Claude Code runs
 """
 
 import asyncio
 import json
 import logging
+import os
+import subprocess
+import threading
 from datetime import datetime
 from typing import Optional, Dict, Any
 
@@ -117,6 +120,31 @@ class ClaudeCodeTerminal:
         return "\n".join(lines)
 
 
+def build_routing_env(nb_url: str, api_key: str = "nb-local") -> dict:
+    """Build env vars that route Claude Code through NeuralBroker."""
+    return {
+        "ANTHROPIC_BASE_URL": f"{nb_url}/v1",
+        "OPENAI_BASE_URL": f"{nb_url}/v1",
+        "OPENAI_API_KEY": api_key,
+    }
+
+
+def launch_claude(env: dict) -> int:
+    """
+    Launch the Claude Code CLI with NeuralBroker routing env vars.
+    Returns the process exit code.
+    """
+    merged_env = {**os.environ, **env}
+    try:
+        result = subprocess.run(["claude"], env=merged_env)
+        return result.returncode
+    except FileNotFoundError:
+        print("\n  claude CLI not found in PATH.")
+        print("  Install Claude Code: https://claude.ai/code")
+        print("  Or: npm install -g @anthropic-ai/claude-code")
+        return 1
+
+
 async def launch_code_with_routing_context(
     broker_host: str = "localhost",
     broker_port: int = 8000,
@@ -125,34 +153,61 @@ async def launch_code_with_routing_context(
     """
     Launch Claude Code with NeuralBroker routing context.
 
-    Args:
-        broker_host: NeuralBroker host (default: localhost)
-        broker_port: NeuralBroker port (default: 8000)
-        watch: Stream routing decisions in real-time
+    1. Connect to NeuralBroker and display current routing state.
+    2. Set env vars so Claude Code routes through NeuralBroker.
+    3. If --watch: stream routing decisions in a background thread while Claude Code runs.
+    4. Launch the claude CLI subprocess.
     """
     terminal = ClaudeCodeTerminal(broker_host, broker_port)
 
     if not await terminal.connect():
-        print("ERROR: Could not connect to NeuralBroker")
-        print(f"Make sure NeuralBroker is running: neuralbrok start")
+        print("  ERROR: Could not connect to NeuralBroker")
+        print(f"  Make sure NeuralBroker is running: neuralbrok start")
         return
 
-    print(f"\n  Connected to NeuralBroker at {terminal.broker_url}\n")
+    # Show current routing context before launch
+    context = await terminal.get_routing_context()
+    print(f"\n{terminal.format_context(context)}\n")
 
-    if watch:
-        print("  Streaming routing decisions (Ctrl+C to stop)...\n")
+    nb_url = terminal.broker_url
+    api_key = os.environ.get("NB_API_KEY", "nb-local")
+    env = build_routing_env(nb_url, api_key)
 
-        async def on_update(context):
-            print(f"\r{terminal.format_context(context)}", end="", flush=True)
-
-        try:
-            await terminal.stream_routing_decisions(on_update)
-        except KeyboardInterrupt:
-            print("\n\nStopped.")
-    else:
-        # One-shot context display
-        context = await terminal.get_routing_context()
-        print(terminal.format_context(context))
-        print(f"\n  Use --watch flag to stream in real-time")
+    print(f"  Routing: ANTHROPIC_BASE_URL={nb_url}/v1")
+    print(f"  Launching Claude Code...\n")
 
     await terminal.disconnect()
+
+    if watch:
+        # Stream routing stats in background while Claude Code runs
+        stop_event = threading.Event()
+
+        def _watch_loop():
+            import httpx
+            while not stop_event.is_set():
+                try:
+                    with httpx.Client(timeout=2.0) as c:
+                        r = c.get(f"{nb_url}/nb/stats")
+                        if r.status_code == 200:
+                            s = r.json()
+                            total = s.get("total_requests", 0)
+                            local_pct = s.get("local_pct", 0)
+                            saved = s.get("total_saved", 0.0)
+                            print(
+                                f"\r  [NB] reqs={total}  local={local_pct}%  saved=${saved:.4f}",
+                                end="",
+                                flush=True,
+                            )
+                except Exception:
+                    pass
+                stop_event.wait(0.5)
+
+        watcher = threading.Thread(target=_watch_loop, daemon=True)
+        watcher.start()
+        try:
+            launch_claude(env)
+        finally:
+            stop_event.set()
+            print()  # newline after the watch line
+    else:
+        launch_claude(env)

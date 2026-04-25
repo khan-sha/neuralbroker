@@ -34,8 +34,9 @@ class RegistrySync:
         
         logger.info("Starting model registry sync...")
         
-        # 1. Scrape trending (user requested)
-        self.trending_cache = get_trending_ollama_models()
+        # 1. Scrape trending (user requested) — run in executor to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        self.trending_cache = await loop.run_in_executor(None, get_trending_ollama_models)
         
         # 2. Fetch full catalog
         self.catalog_cache = fetch_latest_ollama_models()

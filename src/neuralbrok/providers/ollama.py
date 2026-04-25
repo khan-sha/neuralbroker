@@ -83,13 +83,16 @@ class OllamaProvider(BaseProvider):
                                 continue
 
                             content = chunk.get("message", {}).get("content", "")
+                            done = chunk.get("done", False)
+
+                            # Skip empty non-terminal chunks (thinking phase, etc.)
+                            if not content and not done:
+                                continue
 
                             # Check for OOM in content
                             for pattern in OOM_PATTERNS:
                                 if pattern.lower() in content.lower():
                                     raise OOMError(self.name, content)
-
-                            done = chunk.get("done", False)
 
                             openai_chunk = {
                                 "id": chunk_id,

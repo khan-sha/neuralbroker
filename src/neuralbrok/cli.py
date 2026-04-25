@@ -1358,7 +1358,72 @@ def doctor():
         else:
             print(f"  {res[1] if res else exc}")
             failed += 1
-    
+
+    time.sleep(0.08)
+
+    # 8. Quick local benchmark (TTFT) — only if Ollama has models
+    def check_benchmark():
+        try:
+            with httpx.Client(timeout=2.0) as c:
+                r = c.get("http://localhost:11434/api/tags")
+                models = r.json().get("models", [])
+                if not models:
+                    return "skip", ""
+                m = models[0]["name"]
+            t0 = time.perf_counter()
+            with httpx.Client(timeout=30.0) as c:
+                with c.stream("POST", "http://localhost:11434/api/chat", json={
+                    "model": m, "messages": [{"role": "user", "content": "Hi"}], "stream": True
+                }) as resp:
+                    for _ in resp.iter_lines():
+                        ttft = (time.perf_counter() - t0) * 1000
+                        break
+            return True, f"{GREEN}✓ Latency{RESET}  {m}  {ttft:.0f}ms TTFT"
+        except Exception as e:
+            return "warn", f"{AMBER}⚠ Benchmark skipped{RESET}  {e}"
+
+    res, exc = check_anim("Local benchmark      measuring TTFT...", check_benchmark)
+    if res and res[0] is True:
+        print(f"  {res[1]}")
+        passed += 1
+    elif res and res[0] == "warn":
+        print(f"  {res[1]}")
+        warn += 1
+    # skip silently if no models
+
+    time.sleep(0.08)
+
+    # 9. Cloud provider connectivity
+    cloud_checks = [
+        ("Groq",     "GROQ_KEY",      "https://api.groq.com/openai/v1/models"),
+        ("Together", "TOGETHER_KEY",  "https://api.together.xyz/v1/models"),
+        ("OpenAI",   "OPENAI_KEY",    "https://api.openai.com/v1/models"),
+    ]
+    for prov_name, env_var, url in cloud_checks:
+        key = os.getenv(env_var)
+        if not key:
+            continue
+        def _make_cloud_check(n, k, u):
+            def check_cloud():
+                try:
+                    with httpx.Client(timeout=5.0) as c:
+                        r = c.get(u, headers={"Authorization": f"Bearer {k}"})
+                        if r.status_code in (200, 401, 403):
+                            return True, f"{GREEN}✓ {n} reachable{RESET}"
+                        return False, f"{RED}✗ {n} returned {r.status_code}{RESET}"
+                except Exception as e:
+                    return False, f"{RED}✗ {n} unreachable{RESET}  {e}"
+            return check_cloud
+        res, exc = check_anim(f"Cloud: {prov_name:<16} connectivity...", _make_cloud_check(prov_name, key, url))
+        if res and res[0]:
+            print(f"  {res[1]}")
+            passed += 1
+        else:
+            msg = res[1] if res else str(exc)
+            print(f"  {msg}")
+            warn += 1
+        time.sleep(0.04)
+
     print()
     print(f"  {DIM}─────────────────────────────────────────────────────{RESET}")
     print(f"  {passed} passed · {warn} warning · {failed} failed")

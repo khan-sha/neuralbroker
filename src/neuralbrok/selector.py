@@ -1,3 +1,4 @@
+import re
 from neuralbrok.models import ModelProfile, get_tok_per_sec, resolve_model, MODEL_REGISTRY
 from neuralbrok.detect import detect_device
 
@@ -45,7 +46,7 @@ class SmartModelSelector:
             headroom = self.available_vram_gb - vram_needed
             score += max(0, headroom * 2.5)
             
-            is_moe = "a" in model.name and "-" in model.name
+            is_moe = re.search(r'\d+b-a\d+', model.name, re.IGNORECASE) is not None
             if is_moe and "fast_response" in workload:
                 score += 15
                 

@@ -553,6 +553,20 @@ async def nb_stats():
     return policy_engine.get_stats()
 
 
+@app.post("/nb/mode")
+async def nb_set_mode(body: dict):
+    """Change routing mode at runtime (cost | speed | fallback | smart)."""
+    if policy_engine is None:
+        return {"error": "policy engine not initialized"}
+    mode = body.get("mode", "cost")
+    try:
+        policy_engine.set_mode(mode)
+        return {"mode": policy_engine.mode.value}
+    except (ValueError, KeyError) as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
+
+
 # ── Observability ─────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -930,10 +944,6 @@ async def onboarding_page():
 async def dashboard_page():
     """Serve the local-first dashboard (embedded)."""
     return HTMLResponse(content=DASHBOARD_HTML)
-    return HTMLResponse(
-        content="<h1>Dashboard not built yet</h1><p>Coming soon.</p>",
-        status_code=200,
-    )
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
@@ -1128,6 +1138,32 @@ DASHBOARD_HTML = r'''<!doctype html>
   .hw-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 6px var(--ok); }
   .hw-tier { color: var(--accent); font-weight: 600; text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent); }
 
+  /* Mode switcher */
+  .mode-switcher { display: flex; gap: 4px; margin-left: 12px; }
+  .mode-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    padding: 3px 9px; border-radius: 12px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--ink-3);
+    transition: 0.15s;
+  }
+  .mode-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .mode-btn.active { border-color: var(--accent); color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+
+  /* Waterfall bar in feed */
+  .feed-item { flex-direction: column; gap: 4px; }
+  .feed-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }
+  .waterfall-bar-wrap { height: 3px; background: var(--line); border-radius: 2px; margin-top: 2px; width: 100%; }
+  .waterfall-bar { height: 3px; border-radius: 2px; transition: width 0.3s ease; min-width: 2px; }
+  .waterfall-bar.local { background: var(--accent); }
+  .waterfall-bar.cloud { background: var(--cool); }
+
+  /* Per-provider cost bars */
+  .prov-cost-bar-wrap { flex: 1; height: 4px; background: var(--line); border-radius: 2px; margin: 0 8px; }
+  .prov-cost-bar { height: 4px; border-radius: 2px; background: var(--accent); }
+  .prov-cost-bar.cloud { background: var(--cool); }
+  .prov-item { align-items: center; }
+  .prov-cost-label { font-size: 10px; color: var(--ink-4); min-width: 52px; text-align: right; }
+
   @media (max-width: 1200px) {
     .grid { grid-template-columns: 280px 1fr; }
     .panel:last-child { display: none; } /* Hide chart on smaller screens */
@@ -1143,6 +1179,12 @@ DASHBOARD_HTML = r'''<!doctype html>
 <div class="header">
   <span class="logo">neuralbroker</span>
   <span class="mode" id="mode-badge">cost-mode</span>
+  <div class="mode-switcher">
+    <button class="mode-btn active" id="btn-cost" onclick="setMode('cost')">cost</button>
+    <button class="mode-btn" id="btn-speed" onclick="setMode('speed')">speed</button>
+    <button class="mode-btn" id="btn-fallback" onclick="setMode('fallback')">fallback</button>
+    <button class="mode-btn" id="btn-smart" onclick="setMode('smart')">smart</button>
+  </div>
   <div class="status">
     <span class="led"></span>
     <span id="status-text">polling · 500ms</span>
@@ -1218,7 +1260,7 @@ DASHBOARD_HTML = r'''<!doctype html>
           <canvas class="chart-canvas" id="cost-chart"></canvas>
         </div>
         <div class="chart-legend">
-          <span class="local"><span class="dot"></span>Local (elec)</span>
+          <span class="local"><span class="dot"></span>Local</span>
           <span class="cloud"><span class="dot"></span>Cloud</span>
         </div>
       </div>
@@ -1263,6 +1305,27 @@ DASHBOARD_HTML = r'''<!doctype html>
     } catch(e) {}
   }
 
+  // ── Mode switcher ──
+  async function setMode(mode) {
+    try {
+      const r = await fetch('/nb/mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: mode }),
+      });
+      const data = await r.json();
+      updateModeBadge(data.mode || mode);
+    } catch(e) {}
+  }
+
+  function updateModeBadge(mode) {
+    document.getElementById('mode-badge').textContent = mode + '-mode';
+    ['cost', 'speed', 'fallback', 'smart'].forEach(function(m) {
+      var btn = document.getElementById('btn-' + m);
+      if (btn) btn.className = 'mode-btn' + (m === mode ? ' active' : '');
+    });
+  }
+
   // ── Fetch Stats ──
   async function fetchStats() {
     try {
@@ -1273,11 +1336,16 @@ DASHBOARD_HTML = r'''<!doctype html>
       document.getElementById('stat-saved').textContent = '$' + s.total_saved.toFixed(2);
       document.getElementById('stat-cloud').textContent = '$' + s.total_cost_cloud.toFixed(2);
 
+      if (s.routing_mode) updateModeBadge(s.routing_mode);
+
       // Chart data
       chartLocal.push(s.total_cost_local);
       chartCloud.push(s.total_cost_cloud);
       if (chartLocal.length > MAX_CHART_POINTS) { chartLocal.shift(); chartCloud.shift(); }
       drawChart();
+
+      // Per-provider cost bars
+      if (s.provider_costs) drawProviderCosts(s.provider_costs);
     } catch(e) {}
   }
 
@@ -1296,18 +1364,23 @@ DASHBOARD_HTML = r'''<!doctype html>
 
       feed.innerHTML = decisions.map(function(d) {
         const cls = d.backend && d.backend.includes('local') ? 'local' : 'cloud';
+        const barPct = Math.min(100, Math.round((d.latency_ms || 0) / 200 * 100));
         return '<div class="feed-item">' +
-          '<div>' +
-            '<span class="backend ' + cls + '">' + (d.backend || '—') + '</span>' +
-            '<div class="meta">' + d.mode + ' · ' + d.latency_ms + 'ms · vram ' + Math.round(d.vram_util * 100) + '%</div>' +
+          '<div class="feed-row">' +
+            '<div>' +
+              '<span class="backend ' + cls + '">' + (d.backend || '—') + '</span>' +
+              '<div class="meta">' + d.mode + ' · ' + d.latency_ms + 'ms · vram ' + Math.round((d.vram_util || 0) * 100) + '%</div>' +
+            '</div>' +
+            '<span class="reason">' + (d.reason || '') + '</span>' +
           '</div>' +
-          '<span class="reason">' + (d.reason || '') + '</span>' +
+          '<div class="waterfall-bar-wrap"><div class="waterfall-bar ' + cls + '" style="width:' + barPct + '%"></div></div>' +
         '</div>';
       }).join('');
     } catch(e) {}
   }
 
   // ── Fetch Providers ──
+  let _providerCosts = {};
   async function fetchProviders() {
     try {
       const r = await fetch('/nb/providers');
@@ -1316,13 +1389,55 @@ DASHBOARD_HTML = r'''<!doctype html>
 
       list.innerHTML = (data.providers || []).map(function(p) {
         const ledCls = p.healthy ? 'ok' : 'fail';
+        const cost = _providerCosts[p.name] || 0;
+        const costStr = cost > 0 ? '$' + cost.toFixed(4) : '';
         return '<div class="prov-item">' +
           '<span class="prov-led ' + ledCls + '"></span>' +
           '<span class="prov-name">' + p.name + '</span>' +
           '<span class="prov-type">' + p.type + '</span>' +
+          (costStr ? '<span class="prov-cost-label">' + costStr + '</span>' : '') +
         '</div>';
       }).join('');
     } catch(e) {}
+  }
+
+  // ── Per-provider cost bar chart ──
+  function drawProviderCosts(costs) {
+    _providerCosts = costs;
+    const canvas = document.getElementById('cost-chart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+
+    const W = rect.width, H = rect.height;
+    const entries = Object.entries(costs).filter(function(e) { return e[1] > 0; });
+    if (entries.length === 0) { drawChart(); return; }
+
+    const pad = { top: 16, right: 10, bottom: 32, left: 10 };
+    const maxCost = Math.max.apply(null, entries.map(function(e) { return e[1]; }));
+    const slotW = (W - pad.left - pad.right) / entries.length;
+    const barW = Math.max(8, slotW - 4);
+
+    ctx.clearRect(0, 0, W, H);
+
+    entries.forEach(function(entry, i) {
+      const name = entry[0], val = entry[1];
+      const x = pad.left + i * slotW;
+      const barH = Math.max(2, (val / maxCost) * (H - pad.top - pad.bottom));
+      const y = H - pad.bottom - barH;
+      const isLocal = name.toLowerCase().includes('local') || name.toLowerCase().includes('ollama');
+      ctx.fillStyle = isLocal ? '#ff87ff' : '#00ffff';
+      ctx.fillRect(x, y, barW, barH);
+      ctx.fillStyle = '#666';
+      ctx.font = '9px JetBrains Mono';
+      ctx.textAlign = 'center';
+      const label = name.length > 8 ? name.slice(0, 7) + '…' : name;
+      ctx.fillText(label, x + barW / 2, H - pad.bottom + 12);
+    });
   }
 
   // ── Fetch Mode ──

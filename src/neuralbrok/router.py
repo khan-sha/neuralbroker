@@ -79,6 +79,9 @@ class PolicyEngine:
             "session_start": datetime.now(timezone.utc).isoformat(),
         }
 
+        # Per-provider cost tracking for dashboard
+        self._provider_costs: dict[str, float] = {}
+
         # Fallback mode: track whether we're in "spill to cloud" state
         self._fallback_spilling = False
 
@@ -404,6 +407,10 @@ class PolicyEngine:
         else:
             self._stats["total_cost_cloud"] += cost_usd
 
+        self._provider_costs[provider_name] = (
+            self._provider_costs.get(provider_name, 0.0) + cost_usd
+        )
+
     def compute_local_cost(
         self, tokens: int, latency_ms: float
     ) -> float:
@@ -443,6 +450,8 @@ class PolicyEngine:
                 if sc > 0 else 0.0
             ),
             "total_cost_saved": round(self._stats["total_saved"], 6),
+            "routing_mode": self.mode.value,
+            "provider_costs": {k: round(v, 6) for k, v in self._provider_costs.items()},
         }
 
     def get_provider_statuses(
@@ -608,7 +617,7 @@ class PolicyEngine:
         # Check if this local provider recently errored
         recently_errored = False
         if name in self._last_error:
-            age = (datetime.utcnow() - self._last_error[name]).total_seconds()
+            age = (datetime.now(timezone.utc) - self._last_error[name]).total_seconds()
             if age < 30:  # Consider errors within last 30s
                 recently_errored = True
 
@@ -677,7 +686,7 @@ def get_vram_snapshot(gpu_id: int = 0) -> VramSnapshot:
             gpu_id=gpu_id,
             vram_used_gb=info.used / (1024**3),
             vram_free_gb=info.free / (1024**3),
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
         )
     except Exception as e:
         raise RuntimeError(f"Failed to query GPU {gpu_id}: {e}")

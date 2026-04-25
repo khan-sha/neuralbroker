@@ -316,10 +316,10 @@ pytest -q
 
 ## Roadmap
 
-### Phase 1 (BETA)
-- [ ] **Claude Code terminal connection** — `neuralbrok code` runs NeuralBroker-aware Claude Code shell with routing context
-- [ ] Dashboard v2 — live routing waterfall, model switching, per-provider cost graph
-- [ ] `neuralbrok doctor` — diagnose config issues, test provider connectivity, benchmark local models
+### Phase 1 (BETA) — complete in v0.7.0
+- [x] **Claude Code terminal connection** — `neuralbrok code` launches Claude Code with NeuralBroker routing context
+- [x] Dashboard v2 — live routing waterfall, model switching, per-provider cost graph
+- [x] `neuralbrok doctor` — diagnose config issues, test provider connectivity, benchmark local models
 
 ### Phase 2
 - [ ] **Hermes agent integration** — deploy autonomous agents that use NeuralBroker for model selection and routing
