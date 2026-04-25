@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import time
@@ -700,106 +701,139 @@ def setup():
 
     # Step 7 - Cloud provider API key configuration
     print()
-    providers = [
-        ("openai",      "OPENAI_KEY",       "https://api.openai.com/v1"),
-        ("anthropic",   "ANTHROPIC_KEY",    "https://api.anthropic.com/v1"),
-        ("google",      "GOOGLE_KEY",       "https://generativelanguage.googleapis.com/v1beta"),
-        ("groq",        "GROQ_KEY",         "https://api.groq.com/openai/v1"),
-        ("together",    "TOGETHER_KEY",     "https://api.together.xyz/v1"),
-        ("cerebras",    "CEREBRAS_KEY",     "https://api.cerebras.ai/v1"),
-        ("deepinfra",   "DEEPINFRA_KEY",    "https://api.deepinfra.com/v1/openai"),
-        ("fireworks",   "FIREWORKS_KEY",    "https://api.fireworks.ai/inference/v1"),
-        ("lepton",      "LEPTON_KEY",       "https://api.lepton.ai/v1"),
-        ("novita",      "NOVITA_KEY",       "https://api.novita.ai/v1"),
-        ("hyperbolic",  "HYPERBOLIC_KEY",   "https://api.hyperbolic.xyz/v1"),
-        ("mistral",     "MISTRAL_KEY",      "https://api.mistral.ai/v1"),
-        ("openrouter",  "OPENROUTER_KEY",   "https://openrouter.ai/api/v1"),
-        ("deepseek",    "DEEPSEEK_KEY",     "https://api.deepseek.com/v1"),
-        ("cohere",      "COHERE_KEY",       "https://api.cohere.ai"),
-        ("perplexity",  "PERPLEXITY_KEY",   "https://api.perplexity.ai"),
-        ("ai21",        "AI21_KEY",         "https://api.ai21.com"),
-        ("replicate",   "REPLICATE_KEY",    "https://api.replicate.com/v1"),
-        ("octoai",      "OCTOAI_KEY",       "https://api.octoai.cloud/v1"),
-        ("cloudflare",  "CLOUDFLARE_KEY",   "https://api.cloudflare.com/client/v4"),
-        ("azure",       "AZURE_OPENAI_KEY", ""),
-        ("custom",      "CUSTOM_KEY",       ""),
+    KNOWN_PROVIDERS = [
+        ("openai",      "OPENAI_KEY",       "https://api.openai.com/v1",               0.002),
+        ("anthropic",   "ANTHROPIC_KEY",    "https://api.anthropic.com/v1",            0.003),
+        ("google",      "GOOGLE_KEY",       "https://generativelanguage.googleapis.com/v1beta", 0.0005),
+        ("groq",        "GROQ_KEY",         "https://api.groq.com/openai/v1",          0.00006),
+        ("together",    "TOGETHER_KEY",     "https://api.together.xyz/v1",             0.0002),
+        ("cerebras",    "CEREBRAS_KEY",     "https://api.cerebras.ai/v1",              0.0001),
+        ("deepinfra",   "DEEPINFRA_KEY",    "https://api.deepinfra.com/v1/openai",     0.0001),
+        ("fireworks",   "FIREWORKS_KEY",    "https://api.fireworks.ai/inference/v1",   0.0002),
+        ("lepton",      "LEPTON_KEY",       "https://api.lepton.ai/v1",                0.0003),
+        ("novita",      "NOVITA_KEY",       "https://api.novita.ai/v1",                0.0002),
+        ("hyperbolic",  "HYPERBOLIC_KEY",   "https://api.hyperbolic.xyz/v1",           0.0002),
+        ("mistral",     "MISTRAL_KEY",      "https://api.mistral.ai/v1",               0.0003),
+        ("openrouter",  "OPENROUTER_KEY",   "https://openrouter.ai/api/v1",            0.0005),
+        ("deepseek",    "DEEPSEEK_KEY",     "https://api.deepseek.com/v1",             0.00028),
+        ("cohere",      "COHERE_KEY",       "https://api.cohere.ai",                   0.0003),
+        ("perplexity",  "PERPLEXITY_KEY",   "https://api.perplexity.ai",               0.0005),
+        ("ai21",        "AI21_KEY",         "https://api.ai21.com",                    0.0005),
+        ("replicate",   "REPLICATE_KEY",    "https://api.replicate.com/v1",            0.002),
+        ("octoai",      "OCTOAI_KEY",       "https://api.octoai.cloud/v1",             0.0003),
+        ("cloudflare",  "CLOUDFLARE_KEY",   "https://api.cloudflare.com/client/v4",    0.0),
+        ("azure",       "AZURE_OPENAI_KEY", "",                                         0.002),
     ]
+    CUSTOM_SENTINEL = "__custom__"
 
-    print(f"  {DIM}Available cloud providers:{RESET}")
-    for i, (name, _, _) in enumerate(providers, 1):
-        print(f"    {DIM}{i:2}.{RESET} {name}")
+    print(f"  {MAGENTA}{BOLD}▸ CLOUD PROVIDERS{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    print(f"  {DIM}Known providers:{RESET}")
+    for i, (name, _, url, cost) in enumerate(KNOWN_PROVIDERS, 1):
+        url_hint = f"  {DIM}{url[:40]}{RESET}" if url else ""
+        print(f"    {DIM}{i:2}.{RESET} {PINK}{name:<14}{RESET}{url_hint}")
+    print(f"    {CYAN}  c. Custom / self-hosted{RESET}  {DIM}(any OpenAI-compatible endpoint){RESET}")
     print()
-    print(f"  {DIM}Enter provider numbers to configure, separated by commas.{RESET}")
-    print(f"  {DIM}Example: 1,4,6  — or press Enter to skip all.{RESET}")
+    print(f"  {DIM}Enter numbers + 'c' for custom, e.g.  1,4,c  — Enter to skip.{RESET}")
     print()
 
     try:
-        sys.stdout.write(f"  Configure providers [1-{len(providers)}] or Enter to skip: ")
+        sys.stdout.write(f"  Configure providers: ")
         sys.stdout.flush()
         selection_raw = input().strip()
     except KeyboardInterrupt:
         print(f"\n  {DIM}Provider config skipped.{RESET}")
         selection_raw = ""
 
-    configured_providers = {}
+    configured_providers = {}   # name → (env_var, base_url, api_key, cost_per_1k)
+    custom_counter = 0
+
     if selection_raw:
-        selected_indices = []
-        for tok in selection_raw.split(","):
+        tokens = [t.strip().lower() for t in selection_raw.replace(",", " ").split()]
+
+        for tok in tokens:
             try:
-                idx = int(tok.strip()) - 1
-                if 0 <= idx < len(providers):
-                    selected_indices.append(idx)
-            except ValueError:
-                pass
+                # ── known provider by index ───────────────────────────────
+                if tok.isdigit():
+                    idx = int(tok) - 1
+                    if not (0 <= idx < len(KNOWN_PROVIDERS)):
+                        continue
+                    pname, env_var, default_url, default_cost = KNOWN_PROVIDERS[idx]
 
-        for idx in selected_indices:
-            pname, env_var, default_url = providers[idx]
-            try:
-                # API Key
-                sys.stdout.write(f"\n  {AMBER}{BOLD}{pname}{RESET} API key: ")
-                sys.stdout.flush()
-                api_key = input().strip()
-                if not api_key:
-                    print(f"  {DIM}Skipped {pname}{RESET}")
-                    continue
+                    sys.stdout.write(f"\n  {PINK}{BOLD}{pname}{RESET} API key: ")
+                    sys.stdout.flush()
+                    api_key_val = input().strip()
+                    if not api_key_val:
+                        print(f"  {DIM}Skipped {pname}{RESET}")
+                        continue
 
-                # Base URL — show default, allow override
-                if pname == "azure":
-                    sys.stdout.write(f"  {pname} base URL (e.g. https://{{resource}}.openai.azure.com/): ")
-                elif pname == "custom":
-                    sys.stdout.write(f"  {pname} base URL (required): ")
-                else:
-                    sys.stdout.write(f"  {pname} base URL [{default_url}]: ")
-                sys.stdout.flush()
-                url_input = input().strip()
-                final_url = url_input if url_input else default_url
+                    if pname == "azure":
+                        sys.stdout.write(f"  Azure endpoint (https://{{resource}}.openai.azure.com/): ")
+                    else:
+                        sys.stdout.write(f"  Base URL [{default_url}]: ")
+                    sys.stdout.flush()
+                    url_in = input().strip()
+                    final_url = url_in if url_in else default_url
 
-                if pname == "custom" and not final_url:
-                    print(f"  {AMBER}⚠ Custom provider needs a base URL — skipped{RESET}")
-                    continue
+                    configured_providers[pname] = (env_var, final_url, api_key_val, default_cost)
+                    print(f"  {MATRIX}✓ {pname} configured{RESET}")
 
-                configured_providers[pname] = (env_var, final_url, api_key)
-                print(f"  {GREEN}✓ {pname} configured{RESET}")
+                # ── custom / self-hosted provider ─────────────────────────
+                elif tok == "c":
+                    custom_counter += 1
+                    print(f"\n  {CYAN}{BOLD}Custom provider #{custom_counter}{RESET}  (any OpenAI-compatible endpoint)")
+
+                    sys.stdout.write(f"  Provider name (e.g. localai, vllm, lm-studio): ")
+                    sys.stdout.flush()
+                    cname = input().strip()
+                    if not cname:
+                        print(f"  {DIM}Skipped — name required{RESET}")
+                        continue
+
+                    sys.stdout.write(f"  Base URL (e.g. http://localhost:1234/v1): ")
+                    sys.stdout.flush()
+                    curl = input().strip()
+                    if not curl:
+                        print(f"  {AMBER}⚠ Base URL required for custom provider — skipped{RESET}")
+                        continue
+
+                    # Env var name — auto-suggest then allow override
+                    suggested_env = f"{cname.upper().replace('-','_').replace(' ','_')}_KEY"
+                    sys.stdout.write(f"  API key env var [{suggested_env}]: ")
+                    sys.stdout.flush()
+                    cenv = input().strip() or suggested_env
+
+                    sys.stdout.write(f"  Cost per 1k tokens [0.0]: ")
+                    sys.stdout.flush()
+                    try:
+                        ccost = float(input().strip() or "0.0")
+                    except ValueError:
+                        ccost = 0.0
+
+                    configured_providers[cname] = (cenv, curl, "", ccost)
+                    print(f"  {MATRIX}✓ {cname} configured  {DIM}→ {curl}{RESET}")
 
             except KeyboardInterrupt:
-                print(f"\n  {DIM}Stopped at {pname}. Saving what was configured so far.{RESET}")
+                print(f"\n  {DIM}Stopped. Saving what was configured so far.{RESET}")
                 break
 
-    # Patch config with API keys
+    # Write providers into config
     if configured_providers:
         try:
             config_text = config_path.read_text()
             provider_lines = []
-            for pname, (env_var, base_url, _api_key) in configured_providers.items():
+            for pname, (env_var, base_url, _key, cost) in configured_providers.items():
                 provider_lines.append(f"  - name: {pname}")
                 provider_lines.append(f"    api_key_env: {env_var}")
                 if base_url:
                     provider_lines.append(f"    base_url: {base_url}")
+                if cost:
+                    provider_lines.append(f"    cost_per_1k_tokens: {cost}")
             pattern = r"cloud_providers:.*?(?=\nrouting:)"
             replacement = "cloud_providers:\n" + "\n".join(provider_lines) + "\n"
             config_text = re.sub(pattern, replacement, config_text, flags=re.DOTALL)
             config_path.write_text(config_text)
-            print(f"\n  {GREEN}✓ {len(configured_providers)} provider(s) saved to config{RESET}")
+            print(f"\n  {MATRIX}✓ {len(configured_providers)} provider(s) saved to config{RESET}")
         except Exception as e:
             print(f"\n  {AMBER}⚠ Could not write provider config: {e}{RESET}")
     else:
@@ -1594,9 +1628,20 @@ def benchmark(model):
 @main.command()
 @click.option("--host", default="localhost", help="NeuralBroker host")
 @click.option("--port", default=8000, help="NeuralBroker port")
-@click.option("--watch", is_flag=True, help="Stream routing decisions in real-time")
-def code(host, port, watch):
-    """Connect Claude Code to NeuralBroker routing context (BETA)."""
+@click.option("--watch", is_flag=True, help="Stream routing decisions alongside Claude Code")
+@click.option("--api-key", default="neuralbrok", help="API key sent to NeuralBroker (default: neuralbrok)")
+def code(host, port, watch, api_key):
+    """Launch Claude Code CLI routed through NeuralBroker.
+
+    Sets ANTHROPIC_BASE_URL to NeuralBroker's /v1 proxy so every
+    Claude Code request is VRAM-routed automatically.
+
+    \b
+    Examples:
+      neuralbrok code
+      neuralbrok code --watch
+      neuralbrok code --host 192.168.1.10 --port 8000
+    """
     import asyncio
     from neuralbrok.integrations import launch_code_with_routing_context
 
@@ -1613,19 +1658,226 @@ def code(host, port, watch):
     print(f"  {DIM}║{RESET}  {DIM}01100011 01101100 01100001 01110101 01100100 01100101{RESET}  {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}    {MAGENTA}{BOLD}CLAUDE{RESET}{PINK}{BOLD}CODE{RESET}  ⟷  {MAGENTA}NEURAL{RESET}{PINK}BROKER{RESET}                  {DIM}║{RESET}")
-    print(f"  {DIM}║{RESET}    {DIM}Real-time routing context · BETA integration{RESET}      {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}VRAM-aware routing · OpenAI-compatible proxy{RESET}      {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}    {DIM}Connecting to {host}:{port}{RESET}                                {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     print(f"  {DIM}╚{W}╝{RESET}")
     print()
 
     try:
-        asyncio.run(launch_code_with_routing_context(host, port, watch))
+        asyncio.run(launch_code_with_routing_context(host, port, watch, api_key))
     except KeyboardInterrupt:
         print(f"\n\n  {MATRIX}✓{RESET} Claude Code terminal closed.\n")
     except Exception as e:
         print(f"\n  {RED}✗ Error: {e}{RESET}\n")
         sys.exit(1)
+
+
+@main.command(name="run")
+@click.argument("model", required=False)
+@click.option("--url", default="http://localhost:8000", help="NeuralBroker base URL.")
+@click.option("--system", default="", help="System prompt to use.")
+def run_cmd(model, url, system):
+    """Chat with a model via NeuralBroker (like `ollama run`).
+
+    Routes the interactive session through NeuralBroker's policy engine.
+    Type /exit or press Ctrl+C to quit.
+
+    \b
+    Examples:
+      neuralbrok run
+      neuralbrok run qwen3.5:9b
+      neuralbrok run --system "You are a coding expert"
+    """
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
+
+    # Resolve model — pick first available from Ollama if not specified
+    if not model:
+        try:
+            with httpx.Client(timeout=3.0) as c:
+                r = c.get("http://localhost:11434/api/tags")
+                models = [m["name"] for m in r.json().get("models", [])]
+                model = models[0] if models else resolve_model("default")
+        except Exception:
+            model = resolve_model("default")
+
+    print(f"  {MAGENTA}{BOLD}NEURAL{RESET}{PINK}{BOLD}BROKER{RESET}  {DIM}run · {model}{RESET}")
+    print(f"  {DIM}Routing via {url}/v1  ·  type /exit or Ctrl+C to quit{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}\n")
+
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+
+    while True:
+        try:
+            sys.stdout.write(f"  {PINK}>{RESET} ")
+            sys.stdout.flush()
+            user_input = input().strip()
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n  {DIM}Session ended.{RESET}\n")
+            break
+
+        if not user_input:
+            continue
+        if user_input.lower() in ("/exit", "/quit", "exit", "quit"):
+            print(f"\n  {DIM}Session ended.{RESET}\n")
+            break
+
+        messages.append({"role": "user", "content": user_input})
+
+        try:
+            sys.stdout.write(f"  {DIM}thinking...{RESET}")
+            sys.stdout.flush()
+
+            with httpx.Client(timeout=120.0) as c:
+                with c.stream("POST", f"{url}/v1/chat/completions", json={
+                    "model": model,
+                    "messages": messages,
+                    "stream": True,
+                }) as resp:
+                    resp.raise_for_status()
+                    full_reply = ""
+                    first = True
+                    for line in resp.iter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0].get("delta", {}).get("content", "")
+                            if delta:
+                                if first:
+                                    sys.stdout.write("\r" + " " * 20 + "\r")
+                                    sys.stdout.flush()
+                                    first = False
+                                sys.stdout.write(delta)
+                                sys.stdout.flush()
+                                full_reply += delta
+                        except (json.JSONDecodeError, KeyError):
+                            continue
+
+            # Get routing metadata from headers
+            backend = resp.headers.get("X-NB-Backend", "")
+            mode    = resp.headers.get("X-NB-RoutingMode", "")
+            vram    = resp.headers.get("X-NB-VRAM", "")
+            cost    = resp.headers.get("X-NB-Cost", "")
+
+            meta = "  ".join(filter(None, [
+                f"{DIM}→ {backend}{RESET}" if backend else "",
+                f"{DIM}{mode}{RESET}" if mode else "",
+                f"{DIM}vram {vram}{RESET}" if vram else "",
+                f"{DIM}{cost}{RESET}" if cost else "",
+            ]))
+            print(f"\n\n  {meta}\n")
+
+            messages.append({"role": "assistant", "content": full_reply})
+
+        except httpx.ConnectError:
+            print(f"\r  {RED}✗ Could not connect to NeuralBroker at {url}{RESET}")
+            print(f"  {DIM}Start it:  neuralbrok start{RESET}\n")
+        except Exception as e:
+            print(f"\r  {RED}✗ Error: {e}{RESET}\n")
+
+
+@main.command(name="list")
+@click.option("--url", default="http://localhost:8000", help="NeuralBroker base URL.")
+@click.option("--all", "show_all", is_flag=True, help="Include all Ollama catalog models.")
+def list_cmd(url, show_all):
+    """List available models from all configured providers.
+
+    Shows locally installed Ollama models and all registered cloud providers.
+
+    \b
+    Examples:
+      neuralbrok list
+      neuralbrok list --all
+    """
+    print(f"  {MAGENTA}{BOLD}NEURAL{RESET}{PINK}{BOLD}BROKER{RESET}  {DIM}model list{RESET}\n")
+
+    # ── Local Ollama models ────────────────────────────────────────────────
+    local_models = []
+    try:
+        with httpx.Client(timeout=3.0) as c:
+            r = c.get("http://localhost:11434/api/tags")
+            if r.status_code == 200:
+                local_models = r.json().get("models", [])
+    except Exception:
+        pass
+
+    print(f"  {PINK}▸ LOCAL (Ollama){RESET}  {DIM}localhost:11434{RESET}")
+    print(f"  {DIM}{'─' * 60}{RESET}")
+    if local_models:
+        print(f"  {DIM}  {'NAME':<35} {'SIZE':>8}  MODIFIED{RESET}")
+        for m in local_models:
+            name    = m.get("name", "?")
+            size_b  = m.get("size", 0)
+            size_gb = size_b / (1024**3)
+            mod     = m.get("modified_at", "")[:10]
+            inst_dot = f"{MATRIX}●{RESET}"
+            print(f"  {inst_dot} {PINK}{name:<35}{RESET} {DIM}{size_gb:>6.1f}GB{RESET}  {DIM}{mod}{RESET}")
+            time.sleep(0.02)
+    else:
+        print(f"  {DIM}  No local models installed — run: ollama pull <model>{RESET}")
+    print()
+
+    # ── Cloud providers via NeuralBroker ──────────────────────────────────
+    try:
+        with httpx.Client(timeout=3.0) as c:
+            prov_resp = c.get(f"{url}/nb/providers").json()
+            cloud_provs = [p for p in prov_resp.get("providers", []) if p.get("type") == "cloud"]
+    except Exception:
+        cloud_provs = []
+
+    if cloud_provs:
+        print(f"  {PINK}▸ CLOUD PROVIDERS{RESET}  {DIM}via NeuralBroker{RESET}")
+        print(f"  {DIM}{'─' * 60}{RESET}")
+        print(f"  {DIM}  {'PROVIDER':<20} {'STATUS':<10}  {'MODELS':>6}{RESET}")
+        for p in cloud_provs:
+            name    = p["name"]
+            healthy = p.get("healthy", False)
+            mcount  = p.get("supported_model_count", 0)
+            status  = f"{MATRIX}● up{RESET}" if healthy else f"{RED}✗ down{RESET}"
+            mstr    = f"{mcount}" if mcount else f"{DIM}any{RESET}"
+            print(f"    {CYAN}{name:<20}{RESET} {status:<10}  {mstr}")
+            time.sleep(0.02)
+        print()
+
+    # ── Full Ollama catalog (--all) ────────────────────────────────────────
+    if show_all:
+        from neuralbrok.ollama_catalog import fetch_latest_ollama_models
+        from neuralbrok.detect import detect_device
+
+        sys.stdout.write(f"  {PINK}◐{RESET}  Fetching Ollama catalog...\r")
+        sys.stdout.flush()
+
+        profile = detect_device()
+        live = fetch_latest_ollama_models(timeout=5.0)
+
+        sys.stdout.write(" " * 50 + "\r")
+
+        print(f"  {PINK}▸ OLLAMA CATALOG{RESET}  {DIM}{len(live)} total  ·  fits your {profile.vram_gb:.1f}GB VRAM{RESET}")
+        print(f"  {DIM}{'─' * 60}{RESET}")
+        print(f"  {DIM}  {'TAG':<32} {'PARAMS':>7}  {'VRAM':>5}  CAPS{RESET}")
+        for m in live[:20]:
+            fits = profile.vram_gb == 0 or m.vram_gb <= profile.vram_gb
+            dot  = f"{MATRIX}●{RESET}" if fits else f"{DIM}○{RESET}"
+            cap_str = ",".join(m.capabilities[:2])
+            print(
+                f"  {dot} {CYAN}{m.tag:<32}{RESET}"
+                f"  {DIM}{m.params_b:>6.1f}B{RESET}"
+                f"  {DIM}{m.vram_gb:>4.1f}G{RESET}"
+                f"  {DIM}{cap_str}{RESET}"
+            )
+            time.sleep(0.015)
+        if len(live) > 20:
+            print(f"  {DIM}  … and {len(live)-20} more  (https://ollama.com/library){RESET}")
+        print()
 
 def _cli_entry():
     try:

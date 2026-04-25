@@ -28,7 +28,7 @@ class LocalNodeConfig(BaseModel):
 class CloudProviderConfig(BaseModel):
     """Configuration for a cloud provider backend (e.g., Groq, Together)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
     name: str
     api_key_env: str
@@ -84,7 +84,7 @@ class CacheConfig(BaseModel):
 class Config(BaseModel):
     """Root configuration."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
     local_nodes: list[LocalNodeConfig] = Field(default_factory=list)
     cloud_providers: list[CloudProviderConfig] = Field(default_factory=list)
