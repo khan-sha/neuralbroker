@@ -258,6 +258,38 @@ Scores are normalized to 0–100% and the top 3 are returned. The highest scorer
 
 ---
 
+## Integrations
+
+NeuralBroker exposes an OpenAI-compatible endpoint at `localhost:8000`. Most AI coding agents and IDEs can point to it as their backend. The `neuralbrok integrations` CLI command automates the configuration for 23 major agents.
+
+| Agent | Type | Config | Setup |
+|---|---|---|---|
+| Claude Code | ✅ native OpenAI-compat | `.claude/settings.json` | `neuralbrok integrations setup claude-code` |
+| Cursor | ✅ native | `.cursor/mcp.json` | `neuralbrok integrations setup cursor` |
+| Cline | ✅ native | `.cline/settings.json` | `neuralbrok integrations setup cline` |
+| GitHub Copilot | 🔄 via proxy | `.vscode/settings.json` | `neuralbrok integrations setup github-copilot` |
+| Gemini CLI | ✅ native | `.gemini/settings.json` | `neuralbrok integrations setup gemini-cli` |
+| OpenCode | ✅ native | `opencode.json` | `neuralbrok integrations setup opencode` |
+| Warp | ✅ env var | `~/.warp/preferences.yaml` | `neuralbrok integrations setup warp` |
+| Codex | ✅ env var | `.env + ~/.codex/config.json` | `neuralbrok integrations setup codex` |
+| Amp | ✅ native | `~/.amp/config.json` | `neuralbrok integrations setup amp` |
+| Kimi Code | ✅ env var | `.kimi/config.json + .env` | `neuralbrok integrations setup kimi-code` |
+| Firebender | ✅ native | `.firebender/config.json` | `neuralbrok integrations setup firebender` |
+| Deep Agents | ✅ native | `.deepagent/config.json` | `neuralbrok integrations setup deep-agents` |
+| Augment | 📝 skill file | `.augment/skills/neuralbroker.md` | `neuralbrok integrations setup augment` |
+| IBM Bob | 📝 skill file | `.bob/skills/neuralbroker.md` | `neuralbrok integrations setup ibm-bob` |
+| OpenClaw | 📝 skill file | `skills/neuralbroker.md` | `neuralbrok integrations setup openclaw` |
+| CodeBuddy | 📝 skill file | `.codebuddy/skills/neuralbroker.md` | `neuralbrok integrations setup codebuddy` |
+| Cortex Code | 📝 skill file | `.cortex/skills/neuralbroker.md` | `neuralbrok integrations setup cortex-code` |
+| Kilo Code | 📝 skill file | `.kilocode/skills/neuralbroker.md` | `neuralbrok integrations setup kilo-code` |
+| Kiro CLI | 📝 skill file | `.kiro/skills/neuralbroker.md` | `neuralbrok integrations setup kiro-cli` |
+| Kode | 📝 skill file | `.kode/skills/neuralbroker.md` | `neuralbrok integrations setup kode` |
+| Qwen Code | 📝 skill file | `.qwen/skills/neuralbroker.md` | `neuralbrok integrations setup qwen-code` |
+| Trae | 📝 skill file | `.trae/skills/neuralbroker.md` | `neuralbrok integrations setup trae` |
+| Windsurf | 📝 skill file | `.windsurf/skills/neuralbroker.md` | `neuralbrok integrations setup windsurf` |
+
+---
+
 ## Docker
 
 ```bash

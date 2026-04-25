@@ -15,6 +15,9 @@ from neuralbrok.config import load_config
 from neuralbrok.detect import detect_device
 from neuralbrok.models import resolve_model
 from neuralbrok.autoconfig import generate_config
+from neuralbrok.integrations import (
+    list_agents, setup as agent_setup, check_status, remove_agent, AGENT_REGISTRY
+)
 
 # ── Pink Matrix color palette ─────────────────────────────────────────────────
 PINK    = "\033[38;5;213m"   # hot pink  — primary accent
@@ -99,7 +102,7 @@ def setup():
     # tagline (4sp + 44chars + 10sp = 58)
     print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}           {DIM}║{RESET}")
     # version (4sp + 54chars = 58, no trailing)
-    print(f"  {DIM}║{RESET}    {DIM}v0.4.1  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}      {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}v0.6.0  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}      {DIM}║{RESET}")
     # blank (58 spaces)
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     # hint (4sp + 27chars + 27sp = 58)
@@ -1626,6 +1629,127 @@ def code(host, port, watch):
     except Exception as e:
         print(f"\n  {RED}✗ Error: {e}{RESET}\n")
         sys.exit(1)
+
+@main.group()
+def integrations():
+    """Manage AI agent/IDE integrations (Claude Code, Cursor, Cline, etc.)."""
+
+@integrations.command("list")
+def integrations_list():
+    """Show all supported agents and their configuration status."""
+    from pathlib import Path
+    
+    agents = list_agents()
+    status = check_status(Path.cwd())
+    
+    print(f"\n  {MAGENTA}{BOLD}AI AGENT INTEGRATIONS{RESET}")
+    print(f"  {DIM}{'─' * 65}{RESET}")
+    print(f"  {DIM}{'Agent':<20} {'Phase':<8} {'Status':<12} {'Slug':<15}{RESET}")
+    print(f"  {DIM}{'─' * 65}{RESET}")
+    
+    for a in agents:
+        stat_icon = f"{MATRIX}✅ configured{RESET}" if status.get(a.slug) else f"{DIM}❌ missing{RESET}"
+        phase_str = f"P{a.phase}"
+        print(f"  {PINK}{a.name:<20}{RESET} {phase_str:<8} {stat_icon:<12} {DIM}{a.slug:<15}{RESET}")
+    
+    print(f"  {DIM}{'─' * 65}{RESET}")
+    print(f"  Setup an agent: {PINK}neuralbrok integrations setup <slug>{RESET}\n")
+
+@integrations.command("setup")
+@click.argument("agent", required=False)
+@click.option("--all", "all_agents", is_flag=True, help="Setup all agents")
+@click.option("--main", "main_only", is_flag=True, help="Setup Phase 1 agents only")
+@click.option("--dry-run", is_flag=True, help="Preview without writing files")
+@click.option("--global", "global_dir", is_flag=True, help="Write to ~ home dir instead of CWD")
+@click.option("--force", is_flag=True, help="Overwrite existing configs without prompting")
+def integrations_setup(agent, all_agents, main_only, dry_run, global_dir, force):
+    """Generate configuration files for AI agents."""
+    from pathlib import Path
+    
+    # Try to load config for NB_URL
+    try:
+        conf = load_config()
+        nb_url = f"http://{conf.server.host}:{conf.server.port}"
+        if conf.server.host == "0.0.0.0":
+            nb_url = f"http://localhost:{conf.server.port}"
+    except:
+        nb_url = "http://localhost:8000"
+        
+    api_key = os.environ.get("NB_API_KEY", "nb-local")
+    project_dir = Path.cwd()
+    
+    to_setup = []
+    if all_agents:
+        to_setup = [a.slug for a in list_agents()]
+    elif main_only:
+        to_setup = [a.slug for a in list_agents() if a.phase == 1]
+    elif agent:
+        if agent not in AGENT_REGISTRY:
+            print(f"  {RED}✗ Unknown agent: {agent}{RESET}")
+            return
+        to_setup = [agent]
+    else:
+        print(f"  {AMBER}⚠ Please specify an agent slug or use --all / --main{RESET}")
+        return
+
+    print(f"\n  {MAGENTA}{BOLD}SETTING UP INTEGRATIONS{RESET} {DIM}({len(to_setup)} agents){RESET}")
+    
+    for slug in to_setup:
+        name = AGENT_REGISTRY[slug].name
+        sys.stdout.write(f"  {PINK}▸{RESET} Setting up {PINK}{name:<20}{RESET} ... ")
+        sys.stdout.flush()
+        try:
+            paths = agent_setup(slug, project_dir, nb_url, api_key, global_dir, dry_run, force)
+            sys.stdout.write(f"{MATRIX}DONE{RESET}\n")
+            for p in paths:
+                print(f"    {DIM}└─ {p}{RESET}")
+        except Exception as e:
+            sys.stdout.write(f"{RED}FAILED: {e}{RESET}\n")
+
+    print(f"\n  {MATRIX}✓ Integration setup complete.{RESET}\n")
+
+@integrations.command("status")
+def integrations_status():
+    """Check which agents are configured in the current project."""
+    from pathlib import Path
+    
+    status = check_status(Path.cwd())
+    print(f"\n  {MAGENTA}{BOLD}INTEGRATION STATUS (CWD){RESET}")
+    print(f"  {DIM}{'─' * 45}{RESET}")
+    
+    any_found = False
+    for slug, is_ok in status.items():
+        if is_ok:
+            any_found = True
+            name = AGENT_REGISTRY[slug].name
+            print(f"  {MATRIX}✅ {name:<25}{RESET} {DIM}{slug}{RESET}")
+            
+    if not any_found:
+        print(f"  {DIM}No agent configurations detected in this directory.{RESET}")
+        
+    print(f"  {DIM}{'─' * 45}{RESET}\n")
+
+@integrations.command("remove")
+@click.argument("agent")
+@click.option("--global", "global_dir", is_flag=True)
+@click.option("--dry-run", is_flag=True)
+def integrations_remove(agent, global_dir, dry_run):
+    """Remove configuration files for an agent."""
+    from pathlib import Path
+    
+    if agent not in AGENT_REGISTRY:
+        print(f"  {RED}✗ Unknown agent: {agent}{RESET}")
+        return
+        
+    print(f"\n  {AMBER}Removing {AGENT_REGISTRY[agent].name} configuration...{RESET}")
+    removed = remove_agent(agent, Path.cwd(), global_dir, dry_run)
+    
+    if removed:
+        for p in removed:
+            print(f"  {MATRIX}removed{RESET} {p}")
+    else:
+        print(f"  {DIM}No files were removed.{RESET}")
+    print()
 
 def _cli_entry():
     try:

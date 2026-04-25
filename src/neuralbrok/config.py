@@ -81,6 +81,16 @@ class CacheConfig(BaseModel):
     redis_url: str = Field(default="redis://localhost:6379")
 
 
+class IntegrationsConfig(BaseModel):
+    """Configuration for AI agent integrations."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nb_url: str = Field(default="http://localhost:8000")
+    api_key_env: str = Field(default="NB_API_KEY")
+    auto_setup: list[str] = Field(default_factory=list)
+
+
 class Config(BaseModel):
     """Root configuration."""
 
@@ -91,6 +101,7 @@ class Config(BaseModel):
     routing: Optional[RoutingConfig] = Field(default_factory=RoutingConfig)
     server: Optional[ServerConfig] = Field(default_factory=ServerConfig)
     cache: Optional[CacheConfig] = Field(default_factory=CacheConfig)
+    integrations: Optional[IntegrationsConfig] = Field(default_factory=IntegrationsConfig)
 
 
 def load_config(path: Optional[str] = None) -> Config:

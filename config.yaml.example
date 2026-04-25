@@ -160,3 +160,10 @@ server:
   host: "0.0.0.0"
   port: 8000
   api_key_env: "NB_API_KEY"
+
+integrations:
+  nb_url: "http://localhost:8000"
+  api_key_env: "NB_API_KEY"
+  auto_setup: []   # agents to auto-configure on `neuralbrok start`
+  # Options: claude-code, cursor, cline, github-copilot, gemini-cli,
+  #          opencode, warp, codex, amp, kimi-code, firebender, deep-agents

@@ -242,21 +242,40 @@ def estimate_vram_from_size(size_bytes: float) -> float:
 
 from neuralbrok.hardware import lookup_gpu
 
-def get_tok_per_sec(profile: ModelProfile, device_key: str) -> float:
-    gpu = lookup_gpu(device_key)
-    if gpu and gpu.bandwidth_gbps:
+def get_tok_per_sec(profile: ModelProfile, device_key: str, bandwidth: Optional[float] = None) -> float:
+    """
+    Calculate estimated tokens per second. 
+    Priority: 
+    1. Explicit bandwidth (if provided)
+    2. Lookup GPU by device_key and use its bandwidth
+    3. Profile's tok_per_sec_gpu map
+    4. Profile's tok_per_sec_cpu (final fallback)
+    """
+    # 1. Use explicit bandwidth (most accurate if detected by telemetry)
+    bw = bandwidth
+    
+    # 2. Lookup GPU if no bandwidth provided
+    if not bw:
+        gpu = lookup_gpu(device_key)
+        if gpu and gpu.bandwidth_gbps:
+            bw = gpu.bandwidth_gbps
+            
+    if bw:
+        # Precision weight (whatmodels style) or fallback to params * 0.7 for 4-bit
         weight = profile.weight_gb if profile.weight_gb > 0 else (profile.params_b * 0.7)
-        overhead = 1.0
-        return round(gpu.bandwidth_gbps / (weight + overhead), 1)
+        overhead = 1.0 # System overhead/KV cache baseline
+        return round(bw / (weight + overhead), 1)
 
-    device_key = device_key.lower()
-    if device_key in profile.tok_per_sec_gpu:
-        return float(profile.tok_per_sec_gpu[device_key])
+    # 3. Fallback to hardcoded tables
+    device_key_low = device_key.lower()
+    if device_key_low in profile.tok_per_sec_gpu:
+        return float(profile.tok_per_sec_gpu[device_key_low])
     
     for k, v in profile.tok_per_sec_gpu.items():
-        if k in device_key:
+        if k in device_key_low:
             return float(v)
             
+    # 4. CPU Fallback
     return float(profile.tok_per_sec_cpu)
 
 def get_runnable_models(vram_gb: float, ram_gb: float, device_key: str, is_laptop: bool = False, models: Optional[list[ModelProfile]] = None) -> list[ModelProfile]:

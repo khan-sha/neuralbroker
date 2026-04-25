@@ -6,5 +6,15 @@ Beta features:
 """
 
 from .claude_code import ClaudeCodeTerminal, launch_code_with_routing_context
+from .agents import AgentIntegration, AGENT_REGISTRY, setup, list_agents, check_status, remove_agent
 
-__all__ = ["ClaudeCodeTerminal", "launch_code_with_routing_context"]
+__all__ = [
+    "ClaudeCodeTerminal", 
+    "launch_code_with_routing_context",
+    "AgentIntegration",
+    "AGENT_REGISTRY",
+    "setup",
+    "list_agents",
+    "check_status",
+    "remove_agent"
+]
