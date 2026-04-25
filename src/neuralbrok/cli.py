@@ -129,7 +129,7 @@ def setup():
     # tagline (4sp + 44chars + 10sp = 58)
     print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}          {DIM}║{RESET}")
     # version (4sp + 51chars + 3sp = 58)
-    print(f"  {DIM}║{RESET}    {DIM}v0.6.4  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}v0.6.5  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
     # blank (58 spaces)
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     # hint (4sp + 27chars + 27sp = 58)

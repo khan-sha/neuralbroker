@@ -85,6 +85,9 @@ class PolicyEngine:
         # Track last error per provider for fallback mode
         self._last_error: dict[str, datetime] = {}
 
+    # Cache hardware profile to avoid expensive detection on every request
+    _cached_hw_profile = None
+
     async def decide_async(
         self,
         request_body: dict,
@@ -96,11 +99,16 @@ class PolicyEngine:
     ) -> RouteDecision:
         if self.mode == PolicyMode.SMART:
             try:
-                prof = detect_device()
-                device_key = prof.gpu_model if prof.gpu_vendor != "none" else prof.platform
-                vram_gb = vram.vram_used_gb + vram.vram_free_gb if vram else 0
-                runnable = get_runnable_models(vram_gb, prof.ram_gb, device_key)
+                if not self._cached_hw_profile:
+                    self._cached_hw_profile = detect_device()
+                prof = self._cached_hw_profile
                 
+                device_key = prof.gpu_model if prof.gpu_vendor != "none" else prof.platform
+                vram_total = vram.vram_used_gb + vram.vram_free_gb if vram else 0
+                runnable = get_runnable_models(vram_total, prof.ram_gb, device_key)
+                
+                # ── Step 1: Prompt Classification ──
+                # Use a small local model for ultra-fast classification
                 small_model = resolve_model("small")
                 mini_model = resolve_model("phi-4-mini")
                 classifier_model = small_model if any(m.name == small_model for m in runnable) else mini_model
@@ -108,131 +116,149 @@ class PolicyEngine:
                 start_class = time.perf_counter()
                 prompt_text = ""
                 if "messages" in request_body and request_body["messages"]:
-                    prompt_text = str(request_body["messages"][-1].get("content", ""))[:200]
+                    prompt_text = str(request_body["messages"][-1].get("content", ""))[:300]
                 
-                system_prompt = 'Classify this prompt into one or more categories. Respond with only a JSON array of strings.\nCategories: ["chat", "coding", "math", "reasoning", "vision", "tools", "rag", "multilingual"]'
+                system_prompt = 'Classify this prompt into categories. Respond with only a JSON array of strings.\nCategories: ["chat", "coding", "math", "reasoning", "vision", "tools", "rag", "multilingual"]'
                 
+                # Check what's actually installed in Ollama
                 loaded_models = []
                 try:
-                    async with httpx.AsyncClient(timeout=0.5) as client:
+                    async with httpx.AsyncClient(timeout=0.8) as client:
                         r = await client.get("http://localhost:11434/api/tags")
                         if r.status_code == 200:
                             loaded_models = [m["name"] for m in r.json().get("models", [])]
                 except Exception:
                     pass
                 
-                async with httpx.AsyncClient(timeout=1.5) as client:
-                    resp = await client.post("http://localhost:11434/api/chat", json={
-                        "model": classifier_model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": prompt_text}
-                        ],
-                        "stream": False
-                    })
-                    if resp.status_code == 200:
-                        content = resp.json()["message"]["content"]
-                        import re
-                        match = re.search(r'\[.*\]', content, re.DOTALL)
-                        categories = json.loads(match.group(0)) if match else []
-                        class_time = int((time.perf_counter() - start_class) * 1000)
-                        
-                        selector = SmartModelSelector(device_key, vram.vram_free_gb if vram else 0, runnable)
-                        best_models = selector.for_workload(categories)
-                        
-                        chosen_model = None
-                        for bm in best_models:
-                            if bm.name in loaded_models or f"{bm.name}:latest" in loaded_models:
-                                chosen_model = bm.name
-                                break
-                        if not chosen_model and loaded_models:
-                            chosen_model = loaded_models[0].replace(":latest", "")
-                        
-                        if chosen_model:
-                            logger.info(f"[smart] {chosen_model} · classified as {categories} · classifier took {class_time}ms")
-                            
-                            local_prov = next((p for p, pt in provider_types.items() if pt == "local"), None)
-                            if local_prov:
-                                request_body["model"] = chosen_model
-                                latency_ms = (time.perf_counter() - start_class) * 1000
-                                decision = RouteDecision(
-                                    backend_chosen=local_prov,
-                                    fallback_chain=[p for p in available_providers if p != local_prov],
-                                    vram_at_decision=vram,
-                                    policy_mode=self.mode,
-                                    classified_as=",".join(categories),
-                                    latency_ms=latency_ms,
-                                    reason=f"smart:{chosen_model}:{','.join(categories)}",
-                                    timestamp=datetime.now(timezone.utc)
-                                )
-                                vram_util = (vram.vram_used_gb / (vram.vram_used_gb + vram.vram_free_gb)) if vram and vram.vram_used_gb + vram.vram_free_gb > 0 else 0
-                                self._routing_log.append({
-                                    "backend": local_prov,
-                                    "mode": "smart",
-                                    "reason": f"smart: classified as {categories} in {class_time}ms → {chosen_model}",
-                                    "classified_as": categories,
-                                    "chosen_model": chosen_model,
-                                    "vram_util": round(vram_util, 3),
-                                    "latency_ms": round(latency_ms, 2),
-                                    "fallback_chain": decision.fallback_chain,
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                })
-                                self._stats["total_requests"] += 1
-                                self._stats["local_requests"] += 1
-                                self._stats["smart_classifications"] += 1
-                                self._stats["total_classify_ms"] += class_time
-                                return decision
-                        
-                        # ── No installed local model matched — try Ollama Cloud ──
-                        # Read cloud models from config if present
-                        cloud_tags = getattr(self.config, "ollama_cloud_models", [])
-                        if not cloud_tags:
-                            # Check config file directly for ollama_cloud_models key
-                            try:
-                                import os, yaml as _yaml
-                                cfg_path = os.path.expanduser("~/.neuralbrok/config.yaml")
-                                if os.path.exists(cfg_path):
-                                    with open(cfg_path) as _f:
-                                        _raw = _yaml.safe_load(_f)
-                                    cloud_tags = _raw.get("ollama_cloud_models", [])
-                            except Exception:
-                                pass
+                categories = []
+                class_time = 0
+                try:
+                    async with httpx.AsyncClient(timeout=2.0) as client:
+                        resp = await client.post("http://localhost:11434/api/chat", json={
+                            "model": classifier_model,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": prompt_text}
+                            ],
+                            "stream": False
+                        })
+                        if resp.status_code == 200:
+                            content = resp.json()["message"]["content"]
+                            import re
+                            match = re.search(r'\[.*\]', content, re.DOTALL)
+                            categories = json.loads(match.group(0)) if match else []
+                            class_time = int((time.perf_counter() - start_class) * 1000)
+                except Exception:
+                    categories = ["chat"] # Default fallback
 
-                        if cloud_tags and local_prov:
-                            # Pick the first cloud tag (highest priority)
-                            cloud_model = cloud_tags[0]
-                            request_body["model"] = cloud_model
-                            latency_ms = (time.perf_counter() - start_class) * 1000
-                            logger.info(f"[smart→cloud] no local fit → {cloud_model} (Ollama Cloud)")
-                            decision = RouteDecision(
-                                backend_chosen=local_prov,
-                                fallback_chain=[p for p in available_providers if p != local_prov],
-                                vram_at_decision=vram,
-                                policy_mode=self.mode,
-                                classified_as=",".join(categories) + ":cloud",
-                                latency_ms=latency_ms,
-                                reason=f"smart:cloud:{cloud_model}:{','.join(categories)}",
-                                timestamp=datetime.now(timezone.utc)
-                            )
-                            self._routing_log.append({
-                                "backend": local_prov,
-                                "mode": "smart",
-                                "reason": f"smart→cloud: no local model fit → {cloud_model}",
-                                "classified_as": categories,
-                                "chosen_model": cloud_model,
-                                "is_cloud": True,
-                                "latency_ms": round(latency_ms, 2),
-                                "fallback_chain": decision.fallback_chain,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            })
-                            self._stats["total_requests"] += 1
-                            self._stats["cloud_requests"] += 1
-                            self._stats["smart_classifications"] += 1
-                            self._stats["total_classify_ms"] += class_time
-                            return decision
+                # ── Step 2: Quality-Aware Selection ──
+                selector = SmartModelSelector(device_key, vram.vram_free_gb if vram else 0, runnable, hw_profile=prof)
+                best_local_models = selector.for_workload(categories)
+                
+                # Check if we have any of the best local models installed
+                chosen_local = None
+                for bm in best_local_models:
+                    if bm.name in loaded_models or f"{bm.name}:latest" in loaded_models:
+                        chosen_local = bm
+                        break
+                
+                # AI Level logic: If the task is "reasoning" or "coding" and local model is small,
+                # we should consider cloud if available.
+                needs_frontier = any(c in categories for c in ["reasoning", "coding", "math"])
+                local_is_small = chosen_local and chosen_local.params_b < 14 # < 14B is "standard"
+                
+                # ── Step 3: Cloud Fallback Check ──
+                cloud_tags = getattr(self.config, "ollama_cloud_models", [])
+                if not cloud_tags:
+                    # Direct check for config key
+                    cloud_tags = getattr(self.config.routing, "ollama_cloud_models", [])
+
+                should_route_cloud = False
+                cloud_reason = ""
+                
+                if needs_frontier and local_is_small and cloud_tags:
+                    should_route_cloud = True
+                    cloud_reason = "frontier_task_vs_small_local"
+                elif not chosen_local and cloud_tags:
+                    should_route_cloud = True
+                    cloud_reason = "no_suitable_local_installed"
+                elif vram and vram.vram_free_gb < 1.0 and cloud_tags: # Near OOM
+                    should_route_cloud = True
+                    cloud_reason = "vram_critically_low"
+
+                if should_route_cloud:
+                    cloud_model = cloud_tags[0]
+                    request_body["model"] = cloud_model
+                    latency_ms = (time.perf_counter() - start_class) * 1000
+                    logger.info(f"[smart→cloud] {cloud_reason} → {cloud_model}")
+                    
+                    local_prov = next((p for p, pt in provider_types.items() if pt == "local"), "ollama")
+                    decision = RouteDecision(
+                        backend_chosen=local_prov,
+                        fallback_chain=[p for p in available_providers if p != local_prov],
+                        vram_at_decision=vram,
+                        policy_mode=self.mode,
+                        classified_as=",".join(categories) + ":cloud",
+                        latency_ms=latency_ms,
+                        reason=f"smart:cloud:{cloud_reason}:{cloud_model}",
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    self._routing_log.append({
+                        "backend": local_prov,
+                        "mode": "smart",
+                        "reason": f"smart→cloud: {cloud_reason} → {cloud_model}",
+                        "classified_as": categories,
+                        "chosen_model": cloud_model,
+                        "is_cloud": True,
+                        "latency_ms": round(latency_ms, 2),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    self._stats["total_requests"] += 1
+                    self._stats["cloud_requests"] += 1
+                    return decision
+
+                # ── Step 4: Final Local Decision ──
+                if not chosen_local and loaded_models:
+                    chosen_local_name = loaded_models[0].replace(":latest", "")
+                elif chosen_local:
+                    chosen_local_name = chosen_local.name
+                else:
+                    chosen_local_name = resolve_model("default")
+
+                request_body["model"] = chosen_local_name
+                latency_ms = (time.perf_counter() - start_class) * 1000
+                logger.info(f"[smart] {chosen_local_name} · categories: {categories}")
+                
+                local_prov = next((p for p, pt in provider_types.items() if pt == "local"), "ollama")
+                decision = RouteDecision(
+                    backend_chosen=local_prov,
+                    fallback_chain=[p for p in available_providers if p != local_prov],
+                    vram_at_decision=vram,
+                    policy_mode=self.mode,
+                    classified_as=",".join(categories),
+                    latency_ms=latency_ms,
+                    reason=f"smart:local:{chosen_local_name}",
+                    timestamp=datetime.now(timezone.utc)
+                )
+                self._routing_log.append({
+                    "backend": local_prov,
+                    "mode": "smart",
+                    "reason": f"smart:local → {chosen_local_name}",
+                    "classified_as": categories,
+                    "chosen_model": chosen_local_name,
+                    "latency_ms": round(latency_ms, 2),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                self._stats["total_requests"] += 1
+                self._stats["local_requests"] += 1
+                self._stats["smart_classifications"] += 1
+                self._stats["total_classify_ms"] += class_time
+                return decision
 
             except Exception as e:
                 logger.warning(f"Smart route failed, falling back to cost mode: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
                 self._stats["fallback_to_cost_count"] += 1
         
         return self.decide(vram, available_providers, provider_types, provider_costs, requested_model)

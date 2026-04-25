@@ -54,18 +54,20 @@ CLOUD_COSTS = {
 class RoutingConfig(BaseModel):
     """Routing policy configuration."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     default_mode: str = Field(default="cost")  # cost | speed | fallback
     vram_poll_interval_seconds: float = Field(default=0.5, ge=0.1)
     electricity_kwh_price: float = Field(default=0.14, ge=0.0)
     gpu_tdp_watts: float = Field(default=320.0, ge=0.0)
+    cloud_enabled: bool = Field(default=False)
+    ollama_cloud_models: list[str] = Field(default_factory=list)
 
 
 class ServerConfig(BaseModel):
     """Server configuration."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     host: str = Field(default="0.0.0.0")
     port: int = Field(default=8000, ge=1, le=65535)
@@ -75,7 +77,7 @@ class ServerConfig(BaseModel):
 class CacheConfig(BaseModel):
     """Redis semantic cache configuration."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     enabled: bool = Field(default=False)
     redis_url: str = Field(default="redis://localhost:6379")
@@ -84,7 +86,7 @@ class CacheConfig(BaseModel):
 class IntegrationsConfig(BaseModel):
     """Configuration for AI agent integrations."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     nb_url: str = Field(default="http://localhost:8000")
     api_key_env: str = Field(default="NB_API_KEY")
@@ -94,7 +96,7 @@ class IntegrationsConfig(BaseModel):
 class Config(BaseModel):
     """Root configuration."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     local_nodes: list[LocalNodeConfig] = Field(default_factory=list)
     cloud_providers: list[CloudProviderConfig] = Field(default_factory=list)
@@ -102,6 +104,10 @@ class Config(BaseModel):
     server: Optional[ServerConfig] = Field(default_factory=ServerConfig)
     cache: Optional[CacheConfig] = Field(default_factory=CacheConfig)
     integrations: Optional[IntegrationsConfig] = Field(default_factory=IntegrationsConfig)
+    
+    # Legacy/Dynamic fields used by CLI setup
+    ollama_cloud_models: list[str] = Field(default_factory=list)
+    routing_cloud_enabled: bool = Field(default=False)
 
 
 def load_config(path: Optional[str] = None) -> Config:
