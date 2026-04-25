@@ -102,7 +102,7 @@ def setup():
     # tagline (4sp + 44chars + 10sp = 58)
     print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}           {DIM}║{RESET}")
     # version (4sp + 54chars = 58, no trailing)
-    print(f"  {DIM}║{RESET}    {DIM}v0.6.0  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}      {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}v0.6.1  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}      {DIM}║{RESET}")
     # blank (58 spaces)
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     # hint (4sp + 27chars + 27sp = 58)
@@ -294,6 +294,7 @@ def setup():
     import asyncio
 
     device_key = profile.gpu_model # Use the detected model (CPU or GPU) as the primary key
+    bw = getattr(profile, "bandwidth_gbps", None)
 
     # ── Live catalog fetch ─────────────────────────────────────────────────
     sys.stdout.write(f"  {PINK}◐{RESET}  Fetching latest models from ollama.com...\r")
@@ -825,12 +826,7 @@ def setup():
         for prompt_text, cats in test_cases:
             best = selector.best_single(cats) if runnable else None
             if best:
-                bw = getattr(profile, "bandwidth_gbps", None)
-                if bw:
-                    weight = best.weight_gb if best.weight_gb > 0 else best.vram_gb
-                    tps = bw / (weight + 1.0)
-                else:
-                    tps = get_tok_per_sec(best, device_key)
+                tps = get_tok_per_sec(best, device_key, bandwidth=bw)
                 ev = best.vram_estimated_gb if best.vram_estimated_gb > 0 else best.vram_gb
                 route_str = f"{MATRIX}{best.name}{RESET}  {DIM}{tps:.0f}t/s  {ev:.1f}GB  [local]{RESET}"
             elif use_ollama_cloud:
