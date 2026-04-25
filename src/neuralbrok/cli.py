@@ -100,9 +100,9 @@ def setup():
         delay=0.004,
     )
     # tagline (4sp + 44chars + 10sp = 58)
-    print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}           {DIM}║{RESET}")
-    # version (4sp + 54chars = 58, no trailing)
-    print(f"  {DIM}║{RESET}    {DIM}v0.6.1  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}      {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}          {DIM}║{RESET}")
+    # version (4sp + 51chars + 3sp = 58)
+    print(f"  {DIM}║{RESET}    {DIM}v0.6.2  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
     # blank (58 spaces)
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     # hint (4sp + 27chars + 27sp = 58)
@@ -622,20 +622,32 @@ def setup():
     
     models_to_pull = []
     
-    if ollama_ok and pulled_models:
-        sys.stdout.write(f"  {GREEN}✓ Ollama connected  {len(pulled_models)} models available{RESET}\n")
-
+    if ollama_ok:
+        sys.stdout.write(f"  {MATRIX}✓{RESET}  Ollama connected  {DIM}{len(pulled_models)} models available{RESET}\n\n")
+        
         for rm in rec_models_names:
-            if rm in pulled_models or f"{rm}:latest" in pulled_models:
-                pass
+            is_installed = rm in pulled_models or f"{rm}:latest" in pulled_models
+            if is_installed:
+                sys.stdout.write(f"  {MATRIX}✓{RESET}  {PINK}{rm:<24}{RESET} {DIM}already installed. Re-pull? [y/N]: {RESET}")
+                sys.stdout.flush()
+                try:
+                    ans = input().lower().strip()
+                    if ans == 'y':
+                        models_to_pull.append(rm)
+                except KeyboardInterrupt:
+                    break
             else:
-                models_to_pull.append(rm)
+                sys.stdout.write(f"  {AMBER}?{RESET}  {PINK}{rm:<24}{RESET} {AMBER}missing. Pull now? [Y/n]: {RESET}")
+                sys.stdout.flush()
+                try:
+                    ans = input().lower().strip()
+                    if ans != 'n':
+                        models_to_pull.append(rm)
+                except KeyboardInterrupt:
+                    break
                 
-
-        if not models_to_pull:
-            print(f"  {GREEN}? All recommended models already available{RESET}")
-        else:
-            print(f"  {AMBER}? Missing {len(models_to_pull)} recommended models. Pulling now...{RESET}")
+        if models_to_pull:
+            print(f"\n  {AMBER}▸ Pulling {len(models_to_pull)} models...{RESET}")
             for m in models_to_pull:
                 sys.stdout.write(f"\n  Pulling {m}\n")
                 proc = subprocess.Popen(["ollama", "pull", m], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
