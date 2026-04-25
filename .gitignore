@@ -24,3 +24,6 @@ Thumbs.db
 config.yaml
 .env
 .claude/
+
+# Development scratch files
+scratch/
