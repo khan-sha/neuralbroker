@@ -62,6 +62,7 @@ class RoutingConfig(BaseModel):
     gpu_tdp_watts: float = Field(default=320.0, ge=0.0)
     cloud_enabled: bool = Field(default=False)
     ollama_cloud_models: list[str] = Field(default_factory=list)
+    allowed_models: list[str] = Field(default_factory=list)
 
 
 class ServerConfig(BaseModel):

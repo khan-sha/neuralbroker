@@ -107,6 +107,14 @@ class PolicyEngine:
                 vram_total = vram.vram_used_gb + vram.vram_free_gb if vram else 0
                 runnable = get_runnable_models(vram_total, prof.ram_gb, device_key)
                 
+                # If user defined an allowed pool, restrict to it
+                allowed = getattr(self.config, "allowed_models", [])
+                if not allowed and self.config.routing:
+                    allowed = getattr(self.config.routing, "allowed_models", [])
+                
+                if allowed:
+                    runnable = [m for m in runnable if m.name in allowed]
+                
                 # ── Step 1: Prompt Classification ──
                 # Use a small local model for ultra-fast classification
                 small_model = resolve_model("small")

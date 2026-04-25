@@ -6,7 +6,7 @@ Beta features:
 """
 
 from .claude_code import ClaudeCodeTerminal, launch_code_with_routing_context
-from .agents import AgentIntegration, AGENT_REGISTRY, setup, list_agents, check_status, remove_agent
+from .agents import AgentIntegration, AGENT_REGISTRY, setup, list_agents, check_status, remove_agent, get_installed_integrations, _nb_url
 
 __all__ = [
     "ClaudeCodeTerminal", 
@@ -16,5 +16,7 @@ __all__ = [
     "setup",
     "list_agents",
     "check_status",
-    "remove_agent"
+    "remove_agent",
+    "get_installed_integrations",
+    "_nb_url"
 ]

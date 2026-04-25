@@ -16,7 +16,8 @@ from neuralbrok.detect import detect_device
 from neuralbrok.models import resolve_model
 from neuralbrok.autoconfig import generate_config
 from neuralbrok.integrations import (
-    list_agents, setup as agent_setup, check_status, remove_agent, AGENT_REGISTRY
+    list_agents, setup as agent_setup, check_status, remove_agent, AGENT_REGISTRY,
+    get_installed_integrations, _nb_url
 )
 
 # ── Pink Matrix color palette ─────────────────────────────────────────────────
@@ -84,9 +85,18 @@ class DynamicIntegrationGroup(click.Group):
                 def _launch(ctx):
                     sys.stdout.write(f"  {PINK}▸{RESET} Launching {PINK}{agent.name}{RESET}...\n")
                     sys.stdout.flush()
+                    
+                    # Prepare environment
+                    env = os.environ.copy()
+                    nb_url = _nb_url() # This uses default or loaded config
+                    api_key = os.environ.get("NB_API_KEY", "nb-local")
+                    
+                    for k, v in agent.launch_env_vars.items():
+                        env[k] = v.format(nb_url=nb_url, api_key=api_key)
+                    
                     try:
                         # For Windows, we might need 'start' or similar, but shell=True usually works for PATH commands
-                        subprocess.run(agent.launch_cmd, shell=True)
+                        subprocess.run(agent.launch_cmd, shell=True, env=env)
                     except Exception as e:
                         sys.stdout.write(f"  {RED}✗{RESET} Failed to launch: {e}\n")
                     sys.stdout.flush()
@@ -129,7 +139,7 @@ def setup():
     # tagline (4sp + 44chars + 10sp = 58)
     print(f"  {DIM}║{RESET}    {DIM}VRAM-aware · local-first · OpenAI-compatible{RESET}          {DIM}║{RESET}")
     # version (4sp + 51chars + 3sp = 58)
-    print(f"  {DIM}║{RESET}    {DIM}v0.6.5  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}v0.6.6  ·  MIT  ·  github.com/khan-sha/neuralbroker{RESET}   {DIM}║{RESET}")
     # blank (58 spaces)
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     # hint (4sp + 27chars + 27sp = 58)
@@ -602,6 +612,13 @@ def setup():
         # Also inject flag for router
         cloud_note += "\nrouting_cloud_enabled: true\n"
         config_yaml += cloud_note
+
+    # Inject user-selected model pool
+    if rec_models_names:
+        models_note = "\n# Selected local models pool\nallowed_models:\n"
+        for mname in rec_models_names:
+            models_note += f"  - {mname}\n"
+        config_yaml += models_note
 
     config_path.write_text(config_yaml)
     
