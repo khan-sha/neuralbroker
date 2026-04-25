@@ -362,3 +362,8 @@ def remove_agent(agent_slug: str, project_dir: Path, global_dir: bool, dry_run: 
                 path.unlink()
                 removed.append(path)
     return removed
+
+def get_installed_integrations(project_dir: Path) -> List[str]:
+    """Returns a list of slugs for agents that appear to be installed."""
+    status = check_status(project_dir)
+    return [slug for slug, installed in status.items() if installed]
