@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import time
@@ -1865,6 +1866,201 @@ def integrations_remove(agent, global_dir, dry_run):
     else:
         print(f"  {DIM}No files were removed.{RESET}")
     print()
+
+@main.command(name="run")
+@click.argument("model", required=False)
+@click.option("--url", default="http://localhost:8000", help="NeuralBroker base URL.")
+@click.option("--system", default="", help="System prompt to use.")
+def run_cmd(model, url, system):
+    """Chat with a model via NeuralBroker (like `ollama run`).
+
+    Routes the interactive session through NeuralBroker's policy engine.
+    Type /exit or press Ctrl+C to quit.
+
+    \b
+    Examples:
+      neuralbrok run
+      neuralbrok run qwen3.5:9b
+      neuralbrok run --system "You are a coding expert"
+    """
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
+
+    if not model:
+        try:
+            with httpx.Client(timeout=3.0) as c:
+                r = c.get("http://localhost:11434/api/tags")
+                models = [m["name"] for m in r.json().get("models", [])]
+                model = models[0] if models else resolve_model("default")
+        except Exception:
+            model = resolve_model("default")
+
+    print(f"  {MAGENTA}{BOLD}NEURAL{RESET}{PINK}{BOLD}BROKER{RESET}  {DIM}run · {model}{RESET}")
+    print(f"  {DIM}Routing via {url}/v1  ·  type /exit or Ctrl+C to quit{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}\n")
+
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+
+    while True:
+        try:
+            sys.stdout.write(f"  {PINK}>{RESET} ")
+            sys.stdout.flush()
+            user_input = input().strip()
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n  {DIM}Session ended.{RESET}\n")
+            break
+
+        if not user_input:
+            continue
+        if user_input.lower() in ("/exit", "/quit", "exit", "quit"):
+            print(f"\n  {DIM}Session ended.{RESET}\n")
+            break
+
+        messages.append({"role": "user", "content": user_input})
+
+        try:
+            sys.stdout.write(f"  {DIM}thinking...{RESET}")
+            sys.stdout.flush()
+
+            with httpx.Client(timeout=120.0) as c:
+                with c.stream("POST", f"{url}/v1/chat/completions", json={
+                    "model": model,
+                    "messages": messages,
+                    "stream": True,
+                }) as resp:
+                    resp.raise_for_status()
+                    full_reply = ""
+                    first = True
+                    for line in resp.iter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0].get("delta", {}).get("content", "")
+                            if delta:
+                                if first:
+                                    sys.stdout.write("\r" + " " * 20 + "\r")
+                                    sys.stdout.flush()
+                                    first = False
+                                sys.stdout.write(delta)
+                                sys.stdout.flush()
+                                full_reply += delta
+                        except (json.JSONDecodeError, KeyError):
+                            continue
+
+            backend = resp.headers.get("X-NB-Backend", "")
+            mode    = resp.headers.get("X-NB-RoutingMode", "")
+            vram    = resp.headers.get("X-NB-VRAM", "")
+            cost    = resp.headers.get("X-NB-Cost", "")
+
+            meta = "  ".join(filter(None, [
+                f"{DIM}→ {backend}{RESET}" if backend else "",
+                f"{DIM}{mode}{RESET}" if mode else "",
+                f"{DIM}vram {vram}{RESET}" if vram else "",
+                f"{DIM}{cost}{RESET}" if cost else "",
+            ]))
+            print(f"\n\n  {meta}\n")
+
+            messages.append({"role": "assistant", "content": full_reply})
+
+        except httpx.ConnectError:
+            print(f"\r  {RED}✗ Could not connect to NeuralBroker at {url}{RESET}")
+            print(f"  {DIM}Start it:  neuralbrok start{RESET}\n")
+        except Exception as e:
+            print(f"\r  {RED}✗ Error: {e}{RESET}\n")
+
+
+@main.command(name="list")
+@click.option("--url", default="http://localhost:8000", help="NeuralBroker base URL.")
+@click.option("--all", "show_all", is_flag=True, help="Include all Ollama catalog models.")
+def list_cmd(url, show_all):
+    """List available models from all configured providers.
+
+    Shows locally installed Ollama models and all registered cloud providers.
+
+    \b
+    Examples:
+      neuralbrok list
+      neuralbrok list --all
+    """
+    print(f"  {MAGENTA}{BOLD}NEURAL{RESET}{PINK}{BOLD}BROKER{RESET}  {DIM}model list{RESET}\n")
+
+    local_models = []
+    try:
+        with httpx.Client(timeout=3.0) as c:
+            r = c.get("http://localhost:11434/api/tags")
+            if r.status_code == 200:
+                local_models = r.json().get("models", [])
+    except Exception:
+        pass
+
+    print(f"  {PINK}▸ LOCAL (Ollama){RESET}  {DIM}localhost:11434{RESET}")
+    print(f"  {DIM}{'─' * 60}{RESET}")
+    if local_models:
+        print(f"  {DIM}  {'NAME':<35} {'SIZE':>8}  MODIFIED{RESET}")
+        for m in local_models:
+            name    = m.get("name", "?")
+            size_b  = m.get("size", 0)
+            size_gb = size_b / (1024**3)
+            mod     = m.get("modified_at", "")[:10]
+            print(f"  {MATRIX}●{RESET} {PINK}{name:<35}{RESET} {DIM}{size_gb:>6.1f}GB{RESET}  {DIM}{mod}{RESET}")
+            time.sleep(0.02)
+    else:
+        print(f"  {DIM}  No local models — run: ollama pull <model>{RESET}")
+    print()
+
+    try:
+        with httpx.Client(timeout=3.0) as c:
+            prov_resp = c.get(f"{url}/nb/providers").json()
+            cloud_provs = [p for p in prov_resp.get("providers", []) if p.get("type") == "cloud"]
+    except Exception:
+        cloud_provs = []
+
+    if cloud_provs:
+        print(f"  {PINK}▸ CLOUD PROVIDERS{RESET}  {DIM}via NeuralBroker{RESET}")
+        print(f"  {DIM}{'─' * 60}{RESET}")
+        print(f"  {DIM}  {'PROVIDER':<20} {'STATUS':<10}  MODELS{RESET}")
+        for p in cloud_provs:
+            healthy = p.get("healthy", False)
+            mcount  = p.get("supported_model_count", 0)
+            status  = f"{MATRIX}● up{RESET}" if healthy else f"{RED}✗ down{RESET}"
+            mstr    = f"{mcount}" if mcount else f"{DIM}any{RESET}"
+            print(f"    {CYAN}{p['name']:<20}{RESET} {status:<10}  {mstr}")
+            time.sleep(0.02)
+        print()
+
+    if show_all:
+        from neuralbrok.ollama_catalog import fetch_latest_ollama_models
+        sys.stdout.write(f"  {PINK}◐{RESET}  Fetching Ollama catalog...\r")
+        sys.stdout.flush()
+        profile = detect_device()
+        live = fetch_latest_ollama_models(timeout=5.0)
+        sys.stdout.write(" " * 50 + "\r")
+        print(f"  {PINK}▸ OLLAMA CATALOG{RESET}  {DIM}{len(live)} total · fits {profile.vram_gb:.1f}GB VRAM{RESET}")
+        print(f"  {DIM}{'─' * 60}{RESET}")
+        print(f"  {DIM}  {'TAG':<32} {'PARAMS':>7}  {'VRAM':>5}  CAPS{RESET}")
+        for m in live[:20]:
+            fits = profile.vram_gb == 0 or m.vram_gb <= profile.vram_gb
+            dot  = f"{MATRIX}●{RESET}" if fits else f"{DIM}○{RESET}"
+            cap_str = ",".join(m.capabilities[:2])
+            print(
+                f"  {dot} {CYAN}{m.tag:<32}{RESET}"
+                f"  {DIM}{m.params_b:>6.1f}B{RESET}"
+                f"  {DIM}{m.vram_gb:>4.1f}G{RESET}"
+                f"  {DIM}{cap_str}{RESET}"
+            )
+            time.sleep(0.015)
+        if len(live) > 20:
+            print(f"  {DIM}  … and {len(live)-20} more (https://ollama.com/library){RESET}")
+        print()
+
 
 def _cli_entry():
     try:
