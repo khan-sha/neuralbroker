@@ -438,37 +438,85 @@ def setup():
     selector = SmartModelSelector(device_key, profile.vram_gb, runnable)
 
     if is_manual and runnable:
-        print(f"  {MAGENTA}{BOLD}▸ MANUAL MODEL SELECTION{RESET}  {DIM}pick from runnable models{RESET}")
-        print(f"  {DIM}{'─' * 54}{RESET}")
-        total_vram = profile.vram_gb if profile.vram_gb > 0 else 8.0
-        for i, m in enumerate(runnable):
-            ev = m.vram_estimated_gb if m.vram_estimated_gb > 0 else m.vram_gb
-            tps = get_tok_per_sec(m, device_key, bandwidth=bw)
-            inst = f"{MATRIX}●{RESET}" if m.is_installed else f"{DIM}○{RESET}"
-            bar = _get_vram_bar(ev, total_vram, width=10)
-            caps = ",".join(m.capabilities[:3])
-            print(f"  {DIM}{i+1:>2}.{RESET} {inst} {PINK}{m.name:<25}{RESET} {bar} {DIM}{ev:.1f}GB  {tps:.0f}tok/s  [{caps}]{RESET}")
-            time.sleep(0.02)
-        print(f"  {DIM}{'─' * 54}{RESET}")
-        try:
-            sys.stdout.write(f"\n  {PINK}Enter numbers to select (e.g. 1,3,5) or Enter for top-4: {RESET}")
-            sys.stdout.flush()
-            raw = input().strip()
-        except KeyboardInterrupt:
-            print(f"\n  {DIM}Setup cancelled.{RESET}")
-            sys.exit(0)
-        if raw:
-            chosen = []
-            for tok in raw.split(","):
+        def _show_manual_list(models_list):
+            total_v = profile.vram_gb if profile.vram_gb > 0 else 8.0
+            print(f"  {MAGENTA}{BOLD}▸ MANUAL MODEL SELECTION{RESET}  {DIM}pick from runnable models{RESET}")
+            print(f"  {DIM}{'─' * 54}{RESET}")
+            for i, m in enumerate(models_list):
+                ev = m.vram_estimated_gb if m.vram_estimated_gb > 0 else m.vram_gb
+                tps = get_tok_per_sec(m, device_key, bandwidth=bw)
+                inst = f"{MATRIX}●{RESET}" if m.is_installed else f"{DIM}○{RESET}"
+                bar = _get_vram_bar(ev, total_v, width=10)
+                caps = ",".join(m.capabilities[:3])
+                print(f"  {DIM}{i+1:>2}.{RESET} {inst} {PINK}{m.name:<25}{RESET} {bar} {DIM}{ev:.1f}GB  {tps:.0f}tok/s  [{caps}]{RESET}")
+            print(f"  {DIM}{'─' * 54}{RESET}")
+
+        _show_manual_list(runnable)
+
+        while True:
+            try:
+                sys.stdout.write(
+                    f"\n  {PINK}Select:{RESET} {DIM}numbers (1,3,5)  ·  "
+                    f"p <model> pull from Ollama  ·  Enter = top-4{RESET}\n"
+                    f"  {PINK}>{RESET} "
+                )
+                sys.stdout.flush()
+                raw = input().strip()
+            except KeyboardInterrupt:
+                print(f"\n  {DIM}Setup cancelled.{RESET}")
+                sys.exit(0)
+
+            # Pull command: "p qwen3:14b" / "pull qwen3:14b" / "ollama pull qwen3:14b"
+            pull_match = None
+            if raw.lower().startswith("ollama pull "):
+                pull_match = raw[len("ollama pull "):].strip()
+            elif raw.lower().startswith("pull "):
+                pull_match = raw[5:].strip()
+            elif raw.lower().startswith("p "):
+                pull_match = raw[2:].strip()
+
+            if pull_match:
+                print(f"\n  {AMBER}▸ Pulling {PINK}{pull_match}{RESET} from Ollama...\n")
                 try:
-                    idx = int(tok.strip()) - 1
-                    if 0 <= idx < len(runnable):
-                        chosen.append(runnable[idx])
-                except ValueError:
-                    pass
-            ranked_models = chosen if chosen else runnable[:4]
-        else:
-            ranked_models = runnable[:4]
+                    proc = subprocess.Popen(
+                        ["ollama", "pull", pull_match],
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                    )
+                    for line in proc.stdout:
+                        line = line.rstrip()
+                        if any(k in line.lower() for k in ["pulling", "verifying", "writing", "success", "error"]):
+                            sys.stdout.write(f"  {DIM}{line}{RESET}\n")
+                            sys.stdout.flush()
+                    proc.wait()
+                    if proc.returncode == 0:
+                        print(f"\n  {MATRIX}✓{RESET} {PINK}{pull_match}{RESET} pulled. Rescanning models...\n")
+                        from neuralbrok.models import get_runnable_models, build_model_catalog
+                        runnable = get_runnable_models(profile.vram_gb, device_key=device_key)
+                        selector.runnable = runnable
+                        _show_manual_list(runnable)
+                    else:
+                        print(f"  {RED}✗ Pull failed — check model name and try again{RESET}")
+                except FileNotFoundError:
+                    print(f"  {RED}✗ ollama not found in PATH{RESET}")
+                except Exception as e:
+                    print(f"  {RED}✗ Pull error: {e}{RESET}")
+                continue
+
+            # Number selection
+            if raw:
+                chosen = []
+                for tok in raw.split(","):
+                    try:
+                        idx = int(tok.strip()) - 1
+                        if 0 <= idx < len(runnable):
+                            chosen.append(runnable[idx])
+                    except ValueError:
+                        pass
+                ranked_models = chosen if chosen else runnable[:4]
+            else:
+                ranked_models = runnable[:4]
+            break
+
         print(f"  {MATRIX}✓{RESET} {len(ranked_models)} model(s) selected\n")
     else:
         ranked_models = selector.for_workload(workload_categories)
@@ -1160,13 +1208,14 @@ def doctor():
     
     def check_anim(msg, check_fn):
         spinners = ["◐", "◓", "◑", "◒"]
-        sys.stdout.write(f"  {AMBER}◐{RESET}  {msg}\r")
+        CLR = "\033[2K\r"  # erase line + carriage return (works on all modern terminals)
+        sys.stdout.write(f"{CLR}  {AMBER}◐{RESET}  {msg}")
         sys.stdout.flush()
-        
+
         result = None
         exception = None
         done = False
-        
+
         def run():
             nonlocal result, exception, done
             try:
@@ -1174,18 +1223,19 @@ def doctor():
             except Exception as e:
                 exception = e
             done = True
-            
+
         t = threading.Thread(target=run)
         t.start()
-        
+
         idx = 0
         while not done:
-            sys.stdout.write(f"  {AMBER}{spinners[idx]}{RESET}  {msg}\r")
+            sys.stdout.write(f"{CLR}  {AMBER}{spinners[idx]}{RESET}  {msg}")
             sys.stdout.flush()
             idx = (idx + 1) % 4
             time.sleep(0.1)
-            
-        sys.stdout.write("                                                     \r")
+
+        sys.stdout.write(f"{CLR}")
+        sys.stdout.flush()
         return result, exception
 
     # 1. Config file

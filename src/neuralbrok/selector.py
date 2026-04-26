@@ -1,4 +1,5 @@
 import re
+import math
 from neuralbrok.models import ModelProfile, get_tok_per_sec, resolve_model, MODEL_REGISTRY
 from neuralbrok.detect import detect_device
 
@@ -15,41 +16,43 @@ class SmartModelSelector:
 
     def for_workload(self, workload: list[str]) -> list[ModelProfile]:
         scored = []
-        bandwidth = self.hw_profile.bandwidth_gbps or 40.0 # Default fallback
-        
+        bandwidth = self.hw_profile.bandwidth_gbps or 40.0
+
         for model in self.runnable:
-            # Base score from size/params (bigger is usually smarter)
-            score = model.params_b
-            
+            # Log-scale base score — avoids 70B always beating 7B regardless of fit.
+            # log2(1)=0, log2(7)≈2.8→11, log2(32)=5→20, log2(70)≈6.1→24
+            score = math.log2(max(model.params_b, 1.0)) * 4.0
+
             for w in workload:
                 if w in model.capabilities:
                     score += 15
                 if w in model.recommended_for:
                     score += 20
-            
-            # tokens_per_sec ≈ bandwidth / (weight_gb + 1.0)
+
+            # tokens_per_sec ≈ bandwidth_GB_s / model_weight_GB
             weight = model.weight_gb if model.weight_gb > 0 else model.vram_gb
             est_tok_s = bandwidth / (weight + 1.0)
-            
+
             if est_tok_s > 60:
                 score += 15
             elif est_tok_s > 30:
                 score += 8
             elif est_tok_s < 10:
                 score -= 15
-                
+
             if "long_context" in workload and model.ctx_k >= 128:
                 score += 25
-                
-            # Headroom scoring
+
+            # Headroom: reward models that leave breathing room, cap to avoid dominating
             vram_needed = model.weight_gb + (model.kv_per_1k_gb * 4.0) if model.weight_gb > 0 else model.vram_gb
             headroom = self.available_vram_gb - vram_needed
-            score += max(0, headroom * 2.5)
-            
-            is_moe = re.search(r'\d+b-a\d+', model.name, re.IGNORECASE) is not None
+            score += min(max(0.0, headroom * 2.0), 20.0)
+
+            # MoE detection: matches both `30b-a3b` (hyphen) and `35b:a3b` (colon) formats
+            is_moe = re.search(r'[-:][aA]\d+', model.name) is not None
             if is_moe and "fast_response" in workload:
                 score += 15
-                
+
             scored.append((model, score))
             
         if not scored: return []
