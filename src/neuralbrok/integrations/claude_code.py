@@ -15,7 +15,7 @@ import logging
 import os
 import subprocess
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ class ClaudeCodeTerminal:
             health = health_resp.json()
 
             return {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "health": health,
                 "stats": stats,
                 "connected": True,

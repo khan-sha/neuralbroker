@@ -4,7 +4,7 @@ Unified cross-platform polling (NVIDIA, Apple, AMD, CPU).
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from neuralbrok.types import VramSnapshot
@@ -55,7 +55,7 @@ class VramPoller:
         Return cached VRAM snapshot. Always <1ms.
         Logs a warning if snapshot is stale (>2s old).
         """
-        age_s = (datetime.now() - self._snapshot.timestamp).total_seconds()
+        age_s = (datetime.now(timezone.utc) - self._snapshot.timestamp).total_seconds()
         if age_s > STALE_THRESHOLD_S:
             logger.warning(
                 f"VRAM snapshot is {age_s:.1f}s old (stale) — polling may have stalled"
@@ -71,7 +71,7 @@ class VramPoller:
                     gpu_id=self._gpu_id,
                     vram_used_gb=stats["used"],
                     vram_free_gb=stats["free"],
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                 )
             except Exception as e:
                 logger.error(f"Error in VRAM poll loop: {e}")
@@ -83,5 +83,5 @@ class VramPoller:
             gpu_id=self._gpu_id,
             vram_used_gb=0.0,
             vram_free_gb=8.0,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
         )

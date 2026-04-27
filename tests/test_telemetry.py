@@ -2,7 +2,7 @@
 Tests for async VRAM telemetry loop.
 """
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -142,7 +142,7 @@ class TestVramPollerStale:
         await poller.start()
 
         # Backdate the cached snapshot
-        old_ts = datetime.now() - timedelta(seconds=STALE_THRESHOLD_S + 1)
+        old_ts = datetime.now(timezone.utc) - timedelta(seconds=STALE_THRESHOLD_S + 1)
         poller._snapshot = VramSnapshot(
             gpu_id=0, vram_used_gb=0.0, vram_free_gb=8.0, timestamp=old_ts
         )

@@ -37,9 +37,9 @@ class RegistrySync:
         # 1. Scrape trending (user requested) — run in executor to avoid blocking event loop
         loop = asyncio.get_event_loop()
         self.trending_cache = await loop.run_in_executor(None, get_trending_ollama_models)
-        
+
         # 2. Fetch full catalog
-        self.catalog_cache = fetch_latest_ollama_models()
+        self.catalog_cache = await loop.run_in_executor(None, fetch_latest_ollama_models)
         
         # 3. Match against local (to see what's new/installed)
         local_catalog = await build_model_catalog(profile, show_progress=False)
