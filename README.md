@@ -2,7 +2,8 @@
 
 <img src="logo.svg" width="280" alt="NeuralBroker logo" />
 
-### Route every AI request through subscriptions you already own. No API keys. No new bills.
+### VRAM-aware LLM routing daemon · local-first · OpenAI-compatible
+### Your GPU first. Your subscription next. Zero new API keys.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![PyPI](https://img.shields.io/pypi/v/neuralbrok)](https://pypi.org/project/neuralbrok/)
