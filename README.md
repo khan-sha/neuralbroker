@@ -1,8 +1,8 @@
-# neuralbroker
+# NeuralBroker
 
-<img src="logo.svg" width="280" alt="neuralbroker logo" />
+<img src="logo.svg" width="280" alt="NeuralBroker logo" />
 
-### VRAM-aware LLM routing daemon · local-first · OpenAI-compatible
+### Route every AI request through subscriptions you already own. No API keys. No new bills.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![PyPI](https://img.shields.io/pypi/v/neuralbrok)](https://pypi.org/project/neuralbrok/)
@@ -10,35 +10,96 @@
 ![FastAPI](https://img.shields.io/badge/framework-FastAPI-009688)
 [![Website](https://img.shields.io/badge/website-neuralbroker.space-pink)](https://neuralbroker.space)
 
-NeuralBroker is an OpenAI-compatible routing daemon that sends LLM requests to your local runtimes first, then spills to cloud providers only when VRAM pressure or policy requires it. It keeps your existing SDK flow intact while reducing avoidable cloud spend by turning local hardware into a first-class inference backend.
+---
+
+## The idea in one sentence
+
+You already pay for Claude Pro. NeuralBroker lets **every app on your machine** use it — automatically, for free, without ever touching an API key.
+
+```
+pip install neuralbrok
+neuralbrok start
+```
+
+That's it. NeuralBroker auto-detects your installed Claude Code OAuth session, ChatGPT auth, Ollama models, and any environment API keys — then presents them as a single OpenAI-compatible endpoint at `localhost:8000/v1`. Point any tool at that URL and routing is live.
 
 ---
 
-## What makes it different
+## What no one else does
 
-- **VRAM-aware routing** — polls GPU state every 500ms; routes locally when memory is free, spills to cloud when pressure builds
-- **SmartModelSelector** — scores every runnable local model on params, workload fit, tok/s, context length, VRAM headroom, and MoE architecture; picks the best one per request category, not just the largest
-- **MoE detection** — identifies mixture-of-experts models (e.g. `qwen3:30b-a3b`) and scores them separately from dense models; prioritizes them for fast-response workloads where low activation count wins
-- **Four routing modes** — cost, speed, fallback, and smart (prompt-classified, model-matched)
-- **Manual model selection** — technical users can pick exact local models by number during setup; no guessing
-- **32 providers, zero SDK changes** — point `base_url` at NeuralBroker, keep the same `openai` client
-- **Interactive setup TUI** — hardware detection, VRAM visualization, model compatibility bars, algorithm self-test, and routing mode selection all in one guided flow
+### 1. Subscription inheritance — turn a $20/month sub into a free API
+
+NeuralBroker reads the OAuth session your Claude Code CLI already holds in `~/.claude/.credentials.json`. It shells out to the `claude` binary to answer requests. No token copying. No API key. Your Claude Pro or Max subscription covers it at zero marginal cost.
+
+```
+Auto-discovered on startup:
+  ✓ Claude PRO subscription    ~/.claude/.credentials.json
+  ✓ Ollama (v0.20.4)           localhost:11434
+  ✓ ChatGPT subscription       ~/.codex/auth.json  (roadmap)
+```
+
+Any app that speaks OpenAI format now routes through your subscription:
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="any-string")
+response = client.chat.completions.create(
+    model="claude-sonnet-4-6",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+# Routed through your Claude Pro subscription. Cost: $0.
+```
+
+### 2. VRAM-aware local-first routing — your GPU before the cloud
+
+NeuralBroker polls GPU state every 500ms. Requests go to your local Ollama models first. Cloud kicks in only when VRAM is under pressure or local fails. Your electricity bill, not Anthropic's servers.
+
+```
+Request arrives → check VRAM → qwen2.5:0.5b fits → route local → $0.00001
+Request arrives → VRAM full → spill → claude_code subprocess → $0.00000 (Pro sub)
+Request arrives → no local match → spill → cheapest cloud provider
+```
+
+### 3. Zero config — discovers everything automatically
+
+No yaml required. On first start NeuralBroker:
+
+- Reads `~/.claude/.credentials.json` → registers Claude Pro/Max via subprocess
+- Reads `~/.codex/auth.json` → registers OpenAI or ChatGPT tokens
+- Scans environment for `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, etc.
+- Pings `localhost:11434` → registers Ollama if running
+- Pings `localhost:8080` → registers llama.cpp if running
+
+Then picks the cheapest path per request. You never write a config file.
+
+### 4. Claude Code + Ollama hybrid — one endpoint for your whole dev stack
+
+```bash
+# NeuralBroker running in the background
+neuralbrok start
+
+# Claude Code routes through NB (simple tasks → local, hard tasks → Claude Pro)
+ANTHROPIC_BASE_URL=http://localhost:8000/v1 claude
+
+# Cursor, Cline, Codex — same endpoint
+# neuralbrok integrations setup cursor
+# neuralbrok integrations setup codex
+```
+
+Simple coding tasks → `qwen2.5:0.5b` locally, instant, free.
+Complex reasoning → `claude-sonnet-4-6` via your Pro subscription, free.
+Cloud overflow → cheapest available provider.
 
 ---
 
 ## Quickstart
 
-### Option A — pip install (recommended)
-
-Works on macOS, Linux, and Windows.
+### Option A — pip install
 
 ```bash
 pip install neuralbrok
-neuralbrok setup
 neuralbrok start
 ```
-
----
 
 ### Option B — from source
 
@@ -46,10 +107,8 @@ neuralbrok start
 ```bash
 git clone https://github.com/khan-sha/neuralbroker.git
 cd neuralbroker
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-neuralbrok setup
 neuralbrok start
 ```
 
@@ -57,14 +116,10 @@ neuralbrok start
 ```powershell
 git clone https://github.com/khan-sha/neuralbroker.git
 cd neuralbroker
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+python -m venv .venv; .venv\Scripts\Activate.ps1
 pip install -e .
-neuralbrok setup
 neuralbrok start
 ```
-
----
 
 ### Option C — Docker
 
@@ -79,7 +134,7 @@ Proxy: `http://localhost:8000/v1` · Dashboard: `http://localhost:8000/dashboard
 
 ---
 
-### Prerequisites by platform
+## Prerequisites
 
 | Platform | Required | Notes |
 |---|---|---|
@@ -87,92 +142,70 @@ Proxy: `http://localhost:8000/v1` · Dashboard: `http://localhost:8000/dashboard
 | macOS · Intel | Python 3.10+ · Ollama | CPU inference · no VRAM pressure |
 | Linux · NVIDIA | Python 3.10+ · Ollama · CUDA 11.8+ | Full VRAM telemetry via pynvml |
 | Linux · AMD | Python 3.10+ · Ollama · ROCm 5.0+ | ROCm telemetry · llama.cpp recommended |
-| Linux · CPU | Python 3.10+ · Ollama | CPU fallback · cloud spillover always active |
-| Windows · NVIDIA | Python 3.10+ · Ollama · CUDA 11.8+ | WSL2 recommended for best performance |
+| Linux · CPU | Python 3.10+ · Ollama | CPU fallback · cloud spillover active |
+| Windows · NVIDIA | Python 3.10+ · Ollama · CUDA 11.8+ | WSL2 recommended |
 | Windows · CPU | Python 3.10+ · Ollama | CPU fallback |
-| Docker · any | Docker Desktop or Docker Engine | No Python install needed |
+| Docker · any | Docker Desktop or Engine | No Python install needed |
 
 Ollama: [ollama.com/download](https://ollama.com/download)
 
-One-line SDK change:
+---
 
-```python
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="nb_live_...")
+## Subscription inheritance — detailed
+
+NeuralBroker auto-discovers auth in priority order:
+
+| Source | Provider | Type | Cost |
+|---|---|---|---|
+| `~/.claude/.credentials.json` | Claude Pro/Max via `claude` CLI | OAuth bearer | **$0** |
+| `~/.codex/auth.json` (tokens) | ChatGPT via Codex | OAuth bearer | **$0** (roadmap) |
+| `~/.codex/auth.json` (api_key) | OpenAI | API key | per-token |
+| `ANTHROPIC_API_KEY` | Anthropic API | API key | per-token |
+| `OPENAI_API_KEY` | OpenAI API | API key | per-token |
+| `GROQ_API_KEY` | Groq | API key | per-token |
+| `localhost:11434` | Ollama | none | **electricity only** |
+| `localhost:8080` | llama.cpp | none | **electricity only** |
+
+Subscription tokens always override env API keys for the same provider. They're effectively free at the margin — the subscription is already paid.
+
+Check what was discovered:
+
+```bash
+curl http://localhost:8000/nb/discovered
 ```
 
----
+Disable auto-discovery:
 
-## What setup does
-
-`neuralbrok setup` runs a fully interactive TUI that:
-
-- Detects GPU vendor, model, and available VRAM (or Apple unified memory)
-- Shows a color-coded VRAM bar and backend (CUDA / Metal / ROCm / CPU)
-- Profiles every installed Ollama model — VRAM fit, estimated tok/s, compatibility score
-- Lets you pick workload type (code, chat, reasoning, RAG, mixed, etc.) or use **manual mode** to select exact models by number from a ranked list
-- Runs an algorithm self-test showing which model routes to 4 sample prompts and why
-- Prompts for cloud provider API keys (optional — local-only works without any)
-- Writes `~/.neuralbrok/config.yaml`
-
----
-
-## Supported hardware
-
-- **NVIDIA**: RTX 30/40 series, or any CUDA 11.8+ compatible GPU
-- **Apple Silicon**: M1 through M4 (Base, Pro, Max, Ultra variants) via Metal unified memory
-- **AMD**: Radeon GPUs supporting ROCm 5.0+
-- **CPU-only**: Fallback mode for systems without a dedicated AI accelerator
-
----
-
-## How it works
-
-1. Point your OpenAI SDK `base_url` to NeuralBroker.
-2. NeuralBroker polls local GPU state (VRAM / utilization) every 500ms.
-3. Policy engine scores local and cloud providers per request using the active routing mode.
-4. Response streams back in OpenAI format with routing headers and metrics.
+```bash
+NB_DISABLE_AUTO_DISCOVERY=1 neuralbrok start
+```
 
 ---
 
 ## Routing modes
 
-### cost
-Route local when VRAM is under threshold, otherwise spill to the cheapest cloud backend.
-
-```yaml
-routing:
-  default_mode: cost
-```
+### cost (default)
+Routes local when VRAM free. Spills to cheapest cloud (subscription first, then cheapest paid).
 
 ### speed
-Always route local for lowest path latency. Cloud only on local failure.
-
-```yaml
-routing:
-  default_mode: speed
-```
+Always local for minimum latency. Cloud only on local failure.
 
 ### fallback
-Prefer local. Fall back to cloud on OOM or repeated error within a 30s window. Resume local when healthy.
-
-```yaml
-routing:
-  default_mode: fallback
-```
+Prefer local. Fall back on OOM or repeated error within 30s. Resumes local when healthy.
 
 ### smart
-Classify each prompt into a workload category (code, reasoning, RAG, fast response, long context, tools, chat). Run SmartModelSelector to score all runnable local models against that category using params, workload fit, tok/s, context length, VRAM headroom, and MoE architecture weight. Pick the best match. Fall back to cloud only on failure.
+Classifies each prompt (code, reasoning, RAG, fast response, long context, tools, chat). Runs SmartModelSelector to score all runnable local models. Picks best match. Falls back to cloud only on failure.
 
 ```yaml
 routing:
-  default_mode: smart
+  default_mode: cost  # cost | speed | fallback | smart
 ```
 
 ---
 
 ## SmartModelSelector
 
-The selector scores every model that fits in available VRAM and ranks them per request:
+Scores every model that fits in available VRAM per request:
 
 | Signal | Weight |
 |---|---|
@@ -186,117 +219,142 @@ The selector scores every model that fits in available VRAM and ranks them per r
 | VRAM headroom (free − model) | ×2 |
 | MoE model + fast_response workload | +15 |
 
-Scores are normalized to 0–100% and the top 3 are returned. The highest scorer routes.
+Scores normalized 0–100%. Top scorer routes.
 
 ---
 
-## API endpoints
+## API
 
 | Endpoint | Description |
 |---|---|
 | `POST /v1/chat/completions` | OpenAI-compatible chat completions |
-| `POST /v1/completions` | OpenAI-compatible text completions |
-| `GET /health` | Health check — returns status and uptime |
-| `GET /nb/stats` | Routing stats — requests routed, fallbacks, smart classifications, avg classify ms |
-| `GET /metrics` | Prometheus metrics scrape endpoint |
-| `GET /dashboard` | Local web dashboard — live routing view |
+| `POST /v1/messages` | Anthropic-compatible messages (auto-translated) |
+| `POST /v1/completions` | Text completions |
+| `GET /health` | Status + uptime |
+| `GET /nb/stats` | Routing stats, fallbacks, avg latency |
+| `GET /nb/discovered` | Auto-discovered auth state |
+| `GET /metrics` | Prometheus scrape endpoint |
+| `GET /dashboard` | Live routing dashboard |
 
 ---
 
 ## Providers
 
-32 total: 20 Pattern-A (OpenAI-compatible) · 8 Pattern-B (custom adapter) · 4 local runtimes
+32 total: 20 Pattern-A (OpenAI-compatible) · 8 Pattern-B (custom adapter) · 4 local runtimes · Claude Code subprocess
 
-*Model lists reflect current catalog at time of release. Provider catalogs change frequently — check each provider's docs for latest available models.*
+### Subscription-backed (no API key)
+
+| Provider | Auth source | Cost |
+|---|---|---|
+| Claude Pro/Max via `claude` CLI | `~/.claude/.credentials.json` | $0 |
+| ChatGPT via Codex (roadmap) | `~/.codex/auth.json` | $0 |
+| Ollama (all local models) | localhost:11434 | electricity |
+| llama.cpp | localhost:8080 | electricity |
 
 ### Pattern A — OpenAI-compatible
 
 | Provider | Notes |
 |---|---|
-| OpenAI | GPT-4o, GPT-4o mini — flagship for complex reasoning and coding |
-| Groq | Llama 4 Maverick, Llama 4 Scout, Qwen3-32B, Llama 3.3 70B — fastest inference via LPU, best first spillover target |
-| Together AI | DeepSeek V3, Llama 4 Maverick, Qwen3-235B — widest open model catalog |
-| Cerebras | Llama 3.3 70B, Qwen3-32B — wafer-scale, 20x faster throughput than NVIDIA |
-| DeepInfra | DeepSeek V3, Qwen3-235B, Llama 4, Mistral Small — cheapest per-token on most open models |
-| Fireworks AI | Llama 4 Maverick, DeepSeek V3, Qwen3 — fast inference with strong function calling on open models |
-| Lepton AI | Llama 3.3 70B, Qwen3 variants — serverless GPU cloud |
-| Novita AI | Qwen3 and DeepSeek variants at lowest market pricing |
-| Hyperbolic | Llama 4, Qwen3-235B — decentralized GPU marketplace, competitive on 70B+ models |
-| Mistral AI | Mistral Small, Mistral Large, Codestral — only source for first-party Mistral models |
-| Kimi (Moonshot) | Kimi K2 — strong long-context (1M token) and multilingual |
-| DeepSeek | DeepSeek V3, DeepSeek R1 — best price-to-performance for coding and reasoning |
-| Qwen (DashScope) | Qwen3-235B-A22B, Qwen3-32B, Qwen3-Coder, QwQ-32B — Alibaba's hybrid reasoning/instruct family |
-| Yi (01.AI) | Yi-Lightning, Yi-Large — strong multilingual, competitive pricing |
-| Baichuan | Baichuan4 — strongest Chinese language understanding |
-| Zhipu (GLM-4) | GLM-4 — strong open-weights reasoning |
-| Perplexity | Sonar Pro, Sonar — live web search built in, unique for online and RAG workloads |
-| AI21 Labs | Jamba 1.5 Large, Jamba 1.5 Mini — SSM-Transformer hybrid, long context at low cost |
-| OctoAI | Llama 4, Qwen3 variants — auto-scaling serverless, good for burst spillover |
-| OpenRouter | 100+ models — last-resort fallback with widest model selection |
+| OpenAI | GPT-4o, GPT-4o mini |
+| Groq | Llama 4, Qwen3-32B — fastest via LPU |
+| Together AI | DeepSeek V3, Llama 4, Qwen3-235B |
+| Cerebras | Llama 3.3 70B — wafer-scale throughput |
+| DeepInfra | DeepSeek V3, Qwen3-235B — cheapest per-token |
+| Fireworks AI | Llama 4, DeepSeek V3, Qwen3 |
+| Lepton AI | Llama 3.3 70B, Qwen3 — serverless GPU |
+| Novita AI | Qwen3 and DeepSeek at lowest pricing |
+| Hyperbolic | Llama 4, Qwen3-235B — decentralized GPU |
+| Mistral AI | Mistral Small, Large, Codestral |
+| Kimi (Moonshot) | Kimi K2 — 1M token context |
+| DeepSeek | DeepSeek V3, R1 — best price/performance for coding |
+| Qwen (DashScope) | Qwen3-235B-A22B, Qwen3-Coder, QwQ-32B |
+| Yi (01.AI) | Yi-Lightning — strong multilingual |
+| Baichuan | Baichuan4 — Chinese language |
+| Zhipu (GLM-4) | GLM-4 |
+| Perplexity | Sonar Pro — live web search built in |
+| AI21 Labs | Jamba 1.5 — SSM-Transformer, long context |
+| OctoAI | Auto-scaling serverless burst |
+| OpenRouter | 100+ models — last-resort fallback |
 
 ### Pattern B — Custom translation layer
 
 | Provider | Notes |
 |---|---|
-| Anthropic | Claude Sonnet, Claude Haiku — best for agentic coding, long context, and complex reasoning |
-| Google Gemini | Gemini 1.5 Pro, Gemini 1.5 Flash — top reasoning benchmarks, 1M token context |
-| Cohere | Command-R+ — enterprise RAG with built-in grounding and citation |
-| Replicate | Any open model including fine-tunes — polling-based predictions API, widest model selection |
-| Cloudflare AI | Workers AI — edge inference at Cloudflare's global network, lowest geographic latency |
-| AWS Bedrock | Claude, Llama 4, Amazon Nova — managed AWS, data residency |
-| Azure OpenAI | GPT-4o, GPT-4o mini — deployment-based, Microsoft enterprise agreements |
-| Google Vertex | Gemini Pro via GCP — VPC and private endpoint support for Google Cloud teams |
-
-### Local runtimes
-
-| Runtime | Platform | Notes |
-|---|---|---|
-| Ollama | NVIDIA · Apple Silicon · AMD | Recommended default — native Metal and CUDA, Llama 4, Qwen3, DeepSeek in model library |
-| llama.cpp | NVIDIA · AMD · CPU | Best for AMD ROCm, CPU-only, and maximum quantization control |
-| LM Studio | NVIDIA · Apple Silicon | GUI-first model browser — exposes OpenAI-compatible server |
-| vLLM | NVIDIA | Best throughput for concurrent requests — PagedAttention, continuous batching, production serving |
+| Anthropic (API key) | Claude Sonnet, Haiku — when no Pro sub |
+| Google Gemini | Gemini 1.5 Pro, Flash — 1M token context |
+| Cohere | Command-R+ — enterprise RAG |
+| Replicate | Any open model including fine-tunes |
+| Cloudflare AI | Edge inference, global |
+| AWS Bedrock | Claude, Llama 4, Amazon Nova — data residency |
+| Azure OpenAI | GPT-4o — Microsoft enterprise |
+| Google Vertex | Gemini via GCP — private endpoint |
 
 ---
 
 ## Integrations
 
-NeuralBroker exposes an OpenAI-compatible endpoint at `localhost:8000`. Most AI coding agents and IDEs can point to it as their backend. The `neuralbrok integrations` CLI command automates the configuration for 23 major agents.
+23 AI coding agents auto-configured via `neuralbrok integrations setup <name>`:
 
-| Agent | Type | Config | Setup |
-|---|---|---|---|
-| Claude Code | ✅ native OpenAI-compat | `.claude/settings.json` | `neuralbrok integrations setup claude-code` |
-| Cursor | ✅ native | `.cursor/mcp.json` | `neuralbrok integrations setup cursor` |
-| Cline | ✅ native | `.cline/settings.json` | `neuralbrok integrations setup cline` |
-| GitHub Copilot | 🔄 via proxy | `.vscode/settings.json` | `neuralbrok integrations setup github-copilot` |
-| Gemini CLI | ✅ native | `.gemini/settings.json` | `neuralbrok integrations setup gemini-cli` |
-| OpenCode | ✅ native | `opencode.json` | `neuralbrok integrations setup opencode` |
-| Warp | ✅ env var | `~/.warp/preferences.yaml` | `neuralbrok integrations setup warp` |
-| Codex | ✅ env var | `.env + ~/.codex/config.json` | `neuralbrok integrations setup codex` |
-| Amp | ✅ native | `~/.amp/config.json` | `neuralbrok integrations setup amp` |
-| Kimi Code | ✅ env var | `.kimi/config.json + .env` | `neuralbrok integrations setup kimi-code` |
-| Firebender | ✅ native | `.firebender/config.json` | `neuralbrok integrations setup firebender` |
-| Deep Agents | ✅ native | `.deepagent/config.json` | `neuralbrok integrations setup deep-agents` |
-| Augment | 📝 skill file | `.augment/skills/neuralbroker.md` | `neuralbrok integrations setup augment` |
-| IBM Bob | 📝 skill file | `.bob/skills/neuralbroker.md` | `neuralbrok integrations setup ibm-bob` |
-| OpenClaw | 📝 skill file | `skills/neuralbroker.md` | `neuralbrok integrations setup openclaw` |
-| CodeBuddy | 📝 skill file | `.codebuddy/skills/neuralbroker.md` | `neuralbrok integrations setup codebuddy` |
-| Cortex Code | 📝 skill file | `.cortex/skills/neuralbroker.md` | `neuralbrok integrations setup cortex-code` |
-| Kilo Code | 📝 skill file | `.kilocode/skills/neuralbroker.md` | `neuralbrok integrations setup kilo-code` |
-| Kiro CLI | 📝 skill file | `.kiro/skills/neuralbroker.md` | `neuralbrok integrations setup kiro-cli` |
-| Kode | 📝 skill file | `.kode/skills/neuralbroker.md` | `neuralbrok integrations setup kode` |
-| Qwen Code | 📝 skill file | `.qwen/skills/neuralbroker.md` | `neuralbrok integrations setup qwen-code` |
-| Trae | 📝 skill file | `.trae/skills/neuralbroker.md` | `neuralbrok integrations setup trae` |
-| Windsurf | 📝 skill file | `.windsurf/skills/neuralbroker.md` | `neuralbrok integrations setup windsurf` |
+| Agent | Config | Command |
+|---|---|---|
+| Claude Code | `.claude/settings.json` | `neuralbrok integrations setup claude-code` |
+| Cursor | `.cursor/mcp.json` | `neuralbrok integrations setup cursor` |
+| Cline | `.cline/settings.json` | `neuralbrok integrations setup cline` |
+| GitHub Copilot | `.vscode/settings.json` | `neuralbrok integrations setup github-copilot` |
+| Gemini CLI | `.gemini/settings.json` | `neuralbrok integrations setup gemini-cli` |
+| OpenCode | `opencode.json` | `neuralbrok integrations setup opencode` |
+| Warp | `~/.warp/preferences.yaml` | `neuralbrok integrations setup warp` |
+| Codex | `.env + ~/.codex/config.json` | `neuralbrok integrations setup codex` |
+| Amp | `~/.amp/config.json` | `neuralbrok integrations setup amp` |
+| Kimi Code | `.kimi/config.json` | `neuralbrok integrations setup kimi-code` |
+| Firebender | `.firebender/config.json` | `neuralbrok integrations setup firebender` |
+| Deep Agents | `.deepagent/config.json` | `neuralbrok integrations setup deep-agents` |
+| Windsurf, Trae, Cursor, Kilo Code, Qwen Code + more | skill files | `neuralbrok integrations setup <name>` |
 
 ---
 
-## Docker
+## Setup TUI (optional)
 
-```bash
-docker compose up -d
-```
+`neuralbrok setup` runs a guided terminal UI for users who want manual configuration:
 
-Starts NeuralBroker plus Prometheus and Grafana for observability. Configure credentials in `.env` (see `.env.example`).
+- Detects GPU vendor, model, VRAM (or Apple unified memory)
+- Profiles every installed Ollama model — VRAM fit, tok/s, compatibility score
+- Manual mode: select exact models by number from ranked list
+- Algorithm self-test: shows which model routes to 4 sample prompts and why
+- Writes `~/.neuralbrok/config.yaml`
+
+---
+
+## Roadmap
+
+### Shipped
+
+- [x] Zero-config subscription inheritance — Claude Pro/Max OAuth auto-discovery, no API key
+- [x] Claude Code subprocess provider — Pro subscription as a free inference backend
+- [x] `/v1/messages` Anthropic endpoint — full wire format translation
+- [x] `/nb/discovered` — inspect auto-discovered auth at runtime
+- [x] VRAM-aware routing — GPU polling, 4 routing modes, cost formula
+- [x] SmartModelSelector — per-request model scoring
+- [x] Dashboard v2 — live routing waterfall, mode switching, cost graph
+- [x] `neuralbrok doctor` — diagnose config, test connectivity, benchmark local
+- [x] `neuralbrok code` — launch Claude Code with NB routing context
+- [x] 23 agent integrations auto-configured via CLI
+
+### Phase 2
+
+- [ ] Subagent decomposition — planner model breaks task into subtasks routed to different models, synthesizer merges
+- [ ] Model council — N models debate a response, moderator merges, disagreement logged as metadata
+- [ ] ChatGPT subscription routing — chatgpt.com OAuth via Codex for $0 GPT-4o
+- [ ] Prompt caching — detect repeated system prompts, route to providers with cache discount
+- [ ] Per-model cost tracking — log token spend per model per day, budget alerts
+
+### Phase 3
+
+- [ ] Dynamic provider weighting — auto-demote slow or error-prone providers
+- [ ] Fine-grained routing rules — route by model name, tag, or regex in config.yaml
+- [ ] Multi-GPU VRAM aggregation — per-GPU model pinning for multi-card setups
+- [ ] Privacy-tier routing — PII detection forces local-only path
+- [ ] Token budget enforcement — daily $ cap auto-downgrades models
 
 ---
 
@@ -304,40 +362,13 @@ Starts NeuralBroker plus Prometheus and Grafana for observability. Configure cre
 
 ```bash
 uvicorn src.neuralbrok.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Run tests:
-
-```bash
 pytest -q
 ```
 
 ---
 
-## Roadmap
-
-### Phase 1 (BETA) — complete in v0.7.0
-- [x] **Claude Code terminal connection** — `neuralbrok code` launches Claude Code with NeuralBroker routing context
-- [x] Dashboard v2 — live routing waterfall, model switching, per-provider cost graph
-- [x] `neuralbrok doctor` — diagnose config issues, test provider connectivity, benchmark local models
-
-### Phase 2
-- [ ] **Hermes agent integration** — deploy autonomous agents that use NeuralBroker for model selection and routing
-- [ ] **Openclaw integration** — connect Openclaw orchestrator to NeuralBroker for decentralized agent coordination
-- [ ] Prompt caching integration — detect repeated system prompts and route to providers with cache discount
-- [ ] Per-model cost tracking — log actual token spend per model per day with budget alerts
-
-### Phase 3
-- [ ] Dynamic provider weighting — auto-demote slow or error-prone providers without manual config changes
-- [ ] Fine-grained routing rules — route by model name, tag, or regex in config.yaml
-- [ ] GGUF download helper — pull and register quantized models from HuggingFace directly from CLI
-- [ ] Multi-GPU support — VRAM aggregation and per-GPU model pinning for multi-card setups
-- [ ] **Multi-agent framework support** — extend to Anthropic Managed Agents, LangGraph, CrewAI
-
----
-
 ## Contributing
 
-Contributions are welcome. Bug reports, routing ideas, provider integrations, docs improvements — open an issue or PR: [GitHub Issues](https://github.com/khan-sha/neuralbroker/issues).
+Bug reports, routing ideas, provider integrations, docs: [GitHub Issues](https://github.com/khan-sha/neuralbroker/issues)
 
 MIT License — see `LICENSE`.
