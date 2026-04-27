@@ -159,7 +159,9 @@ def _register_discovered(prov_name: str, auth: DiscoveredAuth) -> None:
             )
             providers["openai"] = p
             provider_types["openai"] = "cloud"
-            provider_costs["openai"] = 0.0025
+            # gpt-4o=$2.50/$10.00/1M, gpt-4o-mini=$0.15/$0.60/1M
+            # Cost-mode routes to mini by default → blended ~$0.00038/1k
+            provider_costs["openai"] = 0.00038
             logger.info(f"[auto] Registered OpenAI (API key) from {auth.source}")
         elif prov_name == "openai" and auth.auth_type == "oauth_bearer":
             # ChatGPT subscription uses chatgpt.com/backend-api with Responses API,
@@ -172,19 +174,25 @@ def _register_discovered(prov_name: str, auth: DiscoveredAuth) -> None:
             p = GroqProvider(name="groq", base_url="https://api.groq.com/openai/v1", api_key=auth.token)
             providers["groq"] = p
             provider_types["groq"] = "cloud"
-            provider_costs["groq"] = 0.0003
+            # Groq blended: llama-3.1-8b=$0.065/1M cheapest, qwen3-32b=$0.44/1M, llama-4-scout=$0.225/1M
+            # Routing default routes to qwen3-32b (662 t/s, $0.44/1M = $0.00044/1k)
+            provider_costs["groq"] = 0.00044
             logger.info(f"[auto] Registered Groq from {auth.source}")
         elif prov_name == "together":
             p = TogetherProvider(name="together", base_url="https://api.together.xyz/v1", api_key=auth.token)
             providers["together"] = p
             provider_types["together"] = "cloud"
-            provider_costs["together"] = 0.0008
+            # Together: DeepSeek V3=$0.65/1M, Llama-4-Maverick=$0.60/1M, Qwen3-235B=$0.90/1M
+            # Blended estimate: $0.00065/1k
+            provider_costs["together"] = 0.00065
             logger.info(f"[auto] Registered Together from {auth.source}")
         elif prov_name == "gemini":
             p = GeminiProvider(name="gemini", api_key=auth.token)
             providers["gemini"] = p
             provider_types["gemini"] = "cloud"
-            provider_costs["gemini"] = 0.0007
+            # Gemini 2.5 Flash=$0.30 input/$2.50 output per 1M → blended ~$0.0009/1k
+            # Gemini 2.5 Pro=$1.25/$10.00 → blended ~$0.0038/1k; Flash preferred for cost
+            provider_costs["gemini"] = 0.0009
             logger.info(f"[auto] Registered Gemini from {auth.source}")
         else:
             logger.debug(f"[auto] No registration handler for {prov_name}")

@@ -54,6 +54,7 @@ class ModelProfile:
     layers: int = 0
     is_installed: bool = False
     vram_estimated_gb: float = 0.0
+    intelligence_score: float = 0.0  # Artificial Analysis Intelligence Index (0-60 scale)
 
 def estimate_vram_requirement(model: ModelProfile, context_k: int) -> float:
     """Calculate precise VRAM requirement: weights + KV cache."""
@@ -98,11 +99,12 @@ MODELS = [
     {"tag": "qwen3:32b", "params_b": 32.8, "vram_gb": 20.8, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
     {"tag": "qwen3-coder-30b:a3b", "params_b": 30.5, "vram_gb": 19.0, "capabilities": ['chat', 'agentic', 'code', 'coding', 'tools']},
     {"tag": "qwen3-next-80b:a3b", "params_b": 80, "vram_gb": 48.5, "capabilities": ['tools', 'chat', 'agentic']},
-    {"tag": "deepseek-r1:7b", "params_b": 7.62, "vram_gb": 4.9, "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding']},
-    {"tag": "deepseek-r1:14b", "params_b": 14.7, "vram_gb": 9.7, "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding']},
-    {"tag": "deepseek-r1:32b", "params_b": 32.5, "vram_gb": 20.8, "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding']},
-    {"tag": "deepseek-r1:70b", "params_b": 70.6, "vram_gb": 43.7, "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding']},
-    {"tag": "qwq:32b", "params_b": 32.5, "vram_gb": 20.9, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
+    # DeepSeek-R1 local — strong reasoning, coding; scaled by parameter count
+    {"tag": "deepseek-r1:7b",  "params_b": 7.62, "vram_gb": 4.9,  "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding'], "intelligence_score": 20},
+    {"tag": "deepseek-r1:14b", "params_b": 14.7, "vram_gb": 9.7,  "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding'], "intelligence_score": 24},
+    {"tag": "deepseek-r1:32b", "params_b": 32.5, "vram_gb": 20.8, "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding'], "intelligence_score": 27},
+    {"tag": "deepseek-r1:70b", "params_b": 70.6, "vram_gb": 43.7, "capabilities": ['reasoning', 'math', 'chat', 'code', 'coding'], "intelligence_score": 27},
+    {"tag": "qwq:32b", "params_b": 32.5, "vram_gb": 20.9, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools'], "intelligence_score": 30},
     {"tag": "phi-4-mini:3.8b", "params_b": 3.84, "vram_gb": 3.0, "capabilities": ['chat']},
     {"tag": "phi-4:14b", "params_b": 14.7, "vram_gb": 9.8, "capabilities": ['coding', 'chat', 'code']},
     {"tag": "mistral-nemo:12b", "params_b": 12.2, "vram_gb": 8.4, "capabilities": ['tools', 'chat', 'agentic']},
@@ -114,9 +116,10 @@ MODELS = [
     {"tag": "gemma-3:27b", "params_b": 27.0, "vram_gb": 18.9, "capabilities": ['coding', 'vision', 'chat', 'code']},
     {"tag": "glm-4.7:flash", "params_b": 31, "vram_gb": 18.5, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
     {"tag": "nemotron-nano:12b", "params_b": 12.6, "vram_gb": 7.5, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
-    {"tag": "qwen2.5-coder:7b", "params_b": 7.62, "vram_gb": 4.9, "capabilities": ['coding', 'chat', 'code']},
-    {"tag": "qwen2.5-coder:14b", "params_b": 14.7, "vram_gb": 9.7, "capabilities": ['coding', 'chat', 'code']},
-    {"tag": "qwen2.5-coder:32b", "params_b": 32.5, "vram_gb": 20.8, "capabilities": ['coding', 'chat', 'code']},
+    # Qwen2.5-Coder — top local coding models (LiveCodeBench competitive)
+    {"tag": "qwen2.5-coder:7b",  "params_b": 7.62, "vram_gb": 4.9,  "capabilities": ['coding', 'chat', 'code', 'agentic', 'tools'], "intelligence_score": 18},
+    {"tag": "qwen2.5-coder:14b", "params_b": 14.7, "vram_gb": 9.7,  "capabilities": ['coding', 'chat', 'code', 'agentic', 'tools'], "intelligence_score": 22},
+    {"tag": "qwen2.5-coder:32b", "params_b": 32.5, "vram_gb": 20.8, "capabilities": ['coding', 'chat', 'code', 'agentic', 'tools'], "intelligence_score": 26},
     {"tag": "codestral:22b", "params_b": 22.2, "vram_gb": 14.2, "capabilities": ['chat']},
     {"tag": "starcoder2:15b", "params_b": 15.6, "vram_gb": 10.2, "capabilities": ['coding', 'chat', 'code']},
     {"tag": "phi-3-mini:3.8b", "params_b": 3.82, "vram_gb": 3.9, "capabilities": ['chat']},
@@ -129,14 +132,15 @@ MODELS = [
     {"tag": "minimax:m2.1", "params_b": 229, "vram_gb": 138.3, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'code', 'coding', 'tools']},
     {"tag": "step-3.5:flash", "params_b": 197, "vram_gb": 119.7, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'code', 'coding', 'tools']},
     {"tag": "glm:4.6", "params_b": 357, "vram_gb": 216.3, "capabilities": ['reasoning', 'math', 'agentic', 'chat', 'tools']},
-    {"tag": "qwen3.5:0.8b", "params_b": 0.8, "vram_gb": 0.6, "capabilities": ['chat']},
-    {"tag": "qwen3.5:2b", "params_b": 2.0, "vram_gb": 1.3, "capabilities": ['chat']},
-    {"tag": "qwen3.5:4b", "params_b": 4.0, "vram_gb": 2.9, "capabilities": ['chat']},
-    {"tag": "qwen3.5:9b", "params_b": 9.0, "vram_gb": 5.9, "capabilities": ['chat']},
-    {"tag": "qwen3.5:27b", "params_b": 27.0, "vram_gb": 17.5, "capabilities": ['chat']},
-    {"tag": "qwen3.5-35b:a3b", "params_b": 35.0, "vram_gb": 23.0, "capabilities": ['chat']},
-    {"tag": "qwen3.5-122b:a10b", "params_b": 122.0, "vram_gb": 26.6, "capabilities": ['chat']},
-    {"tag": "qwen3.5-397b:a17b", "params_b": 397.0, "vram_gb": 29.2, "capabilities": ['chat']},
+    # Qwen3.5 family — strong reasoning+coding, 262k context, MoE variants efficient
+    {"tag": "qwen3.5:0.8b",  "params_b": 0.8,   "vram_gb": 0.6,  "ctx_k": 262, "capabilities": ['chat', 'reasoning', 'tools'], "intelligence_score": 11},
+    {"tag": "qwen3.5:2b",    "params_b": 2.0,   "vram_gb": 1.3,  "ctx_k": 262, "capabilities": ['chat', 'reasoning', 'tools', 'coding'], "intelligence_score": 18},
+    {"tag": "qwen3.5:4b",    "params_b": 4.0,   "vram_gb": 2.9,  "ctx_k": 262, "capabilities": ['chat', 'reasoning', 'tools', 'coding', 'agentic'], "intelligence_score": 27},
+    {"tag": "qwen3.5:9b",    "params_b": 9.0,   "vram_gb": 5.9,  "ctx_k": 262, "capabilities": ['chat', 'reasoning', 'tools', 'coding', 'agentic', 'math'], "intelligence_score": 32},
+    {"tag": "qwen3.5:27b",   "params_b": 27.0,  "vram_gb": 17.5, "ctx_k": 262, "capabilities": ['chat', 'reasoning', 'tools', 'coding', 'agentic', 'math'], "intelligence_score": 40},
+    {"tag": "qwen3.5-35b:a3b",   "params_b": 35.0,  "vram_gb": 23.0, "ctx_k": 262, "capabilities": ['chat', 'reasoning', 'tools', 'coding', 'agentic', 'math', 'fast_response'], "intelligence_score": 44},
+    {"tag": "qwen3.5-122b:a10b", "params_b": 122.0, "vram_gb": 26.6, "ctx_k": 262, "capabilities": ['chat', 'reasoning', 'tools', 'coding', 'agentic', 'math', 'fast_response', 'long_context'], "intelligence_score": 50},
+    {"tag": "qwen3.5-397b:a17b", "params_b": 397.0, "vram_gb": 29.2, "ctx_k": 262, "capabilities": ['chat', 'reasoning', 'tools', 'coding', 'agentic', 'math', 'fast_response', 'long_context'], "intelligence_score": 54},
     {"tag": "minimax:m2.5", "params_b": 56.85, "vram_gb": 26.6, "capabilities": ['tools', 'chat', 'agentic']},
     {"tag": "glm:5", "params_b": 56.41, "vram_gb": 26.3, "capabilities": ['tools', 'chat', 'agentic']},
     {"tag": "gemma-4:e2b", "params_b": 2.3, "vram_gb": 3.4, "capabilities": ['reasoning', 'math', 'chat', 'agentic', 'vision', 'tools']},
@@ -162,6 +166,19 @@ def _dict_to_profile(d: dict) -> ModelProfile:
             family = fam
             break
 
+    # ctx_k from dict (in thousands) or infer from tag pattern
+    raw_ctx_k = d.get("ctx_k", None)
+    if raw_ctx_k is None:
+        tl2 = tag.lower()
+        if "qwen3.5" in tl2 or "qwen3-5" in tl2:
+            raw_ctx_k = 262
+        elif "llama-4" in tl2 or "llama4" in tl2:
+            raw_ctx_k = 1000
+        elif "gemma-4" in tl2 or "gemma4" in tl2:
+            raw_ctx_k = 128
+        else:
+            raw_ctx_k = 128
+
     return ModelProfile(
         name=name,
         family=family,
@@ -169,7 +186,7 @@ def _dict_to_profile(d: dict) -> ModelProfile:
         quant="Q4_K_M",
         vram_gb=vram,
         ram_gb=vram * 2,
-        ctx_k=128,
+        ctx_k=int(raw_ctx_k),
         tok_per_sec_gpu={},
         tok_per_sec_cpu=1.5,
         capabilities=caps,
@@ -179,6 +196,7 @@ def _dict_to_profile(d: dict) -> ModelProfile:
         weight_gb=d.get("weight_gb", 0.0),
         kv_per_1k_gb=d.get("kv_per_1k_gb", 0.0),
         layers=d.get("layers") or 0,
+        intelligence_score=float(d.get("intelligence_score", 0.0)),
     )
 
 FALLBACK_MODELS: list[ModelProfile] = [_dict_to_profile(d) for d in MODELS]
