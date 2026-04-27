@@ -135,16 +135,24 @@ def _register_discovered(prov_name: str, auth: DiscoveredAuth) -> None:
             provider_costs["llamacpp"] = 0.00002
             logger.info(f"[auto] Registered llama.cpp from {auth.source}")
         elif prov_name == "anthropic":
-            p = AnthropicProvider(
-                name="anthropic", api_key=auth.token, auth_type=auth.auth_type
-            )
-            providers["anthropic"] = p
-            provider_types["anthropic"] = "cloud"
-            # Subscription tokens have $0 marginal cost — already paid
-            provider_costs["anthropic"] = 0.0 if auth.subscription else 0.003
-            sub = (auth.extra or {}).get("subscription_type", "")
-            tag = f"Claude {sub.upper()} subscription" if auth.subscription else "API key"
-            logger.info(f"[auto] Registered Anthropic ({tag}) from {auth.source}")
+            if auth.auth_type == "oauth_bearer":
+                # OAuth tokens from ~/.claude/.credentials.json don't work with /v1/messages API directly.
+                # Shell out to the installed `claude` CLI instead — it carries the OAuth session.
+                from neuralbrok.providers.claude_code_subprocess import ClaudeCodeSubprocessProvider
+                p = ClaudeCodeSubprocessProvider(name="claude_code")
+                providers["claude_code"] = p
+                provider_types["claude_code"] = "cloud"
+                provider_costs["claude_code"] = 0.0
+                sub = (auth.extra or {}).get("subscription_type", "pro")
+                logger.info(f"[auto] Registered Claude Code CLI (Claude {sub.upper()} subscription) from {auth.source}")
+            else:
+                p = AnthropicProvider(
+                    name="anthropic", api_key=auth.token, auth_type="api_key"
+                )
+                providers["anthropic"] = p
+                provider_types["anthropic"] = "cloud"
+                provider_costs["anthropic"] = 0.003
+                logger.info(f"[auto] Registered Anthropic (API key) from {auth.source}")
         elif prov_name == "openai" and auth.auth_type == "api_key":
             p = OpenAIProvider(
                 name="openai", base_url="https://api.openai.com/v1", api_key=auth.token
