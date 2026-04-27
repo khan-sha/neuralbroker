@@ -26,6 +26,7 @@ from neuralbrok.types import OpenAIRequest, PolicyMode
 from neuralbrok.router import PolicyEngine, route_request
 from neuralbrok.telemetry import VramPoller
 from neuralbrok.models import resolve_model
+from neuralbrok.auth_discovery import discover_all, DiscoveredAuth
 
 from neuralbrok import metrics as nb_metrics
 from neuralbrok.providers import (
@@ -114,6 +115,73 @@ poller: Optional[VramPoller] = None
 backends: dict = {}
 
 
+def _register_discovered(prov_name: str, auth: DiscoveredAuth) -> None:
+    """Register a provider discovered from existing CLI auth.
+
+    Subscription-inherited auth gets cost=0 so cost-mode prefers it
+    over paid API keys. Keeps zero-config users on free-margin compute.
+    """
+    try:
+        if prov_name == "ollama":
+            p = OllamaProvider(name="ollama", host="localhost:11434")
+            providers["ollama"] = p
+            provider_types["ollama"] = "local"
+            provider_costs["ollama"] = 0.00002
+            logger.info(f"[auto] Registered Ollama from {auth.source}")
+        elif prov_name == "llamacpp":
+            p = LlamaCppProvider(name="llamacpp", host="localhost:8080")
+            providers["llamacpp"] = p
+            provider_types["llamacpp"] = "local"
+            provider_costs["llamacpp"] = 0.00002
+            logger.info(f"[auto] Registered llama.cpp from {auth.source}")
+        elif prov_name == "anthropic":
+            p = AnthropicProvider(
+                name="anthropic", api_key=auth.token, auth_type=auth.auth_type
+            )
+            providers["anthropic"] = p
+            provider_types["anthropic"] = "cloud"
+            # Subscription tokens have $0 marginal cost — already paid
+            provider_costs["anthropic"] = 0.0 if auth.subscription else 0.003
+            sub = (auth.extra or {}).get("subscription_type", "")
+            tag = f"Claude {sub.upper()} subscription" if auth.subscription else "API key"
+            logger.info(f"[auto] Registered Anthropic ({tag}) from {auth.source}")
+        elif prov_name == "openai" and auth.auth_type == "api_key":
+            p = OpenAIProvider(
+                name="openai", base_url="https://api.openai.com/v1", api_key=auth.token
+            )
+            providers["openai"] = p
+            provider_types["openai"] = "cloud"
+            provider_costs["openai"] = 0.0025
+            logger.info(f"[auto] Registered OpenAI (API key) from {auth.source}")
+        elif prov_name == "openai" and auth.auth_type == "oauth_bearer":
+            # ChatGPT subscription uses chatgpt.com/backend-api with Responses API,
+            # not the standard chat/completions endpoint. Roadmap item.
+            logger.info(
+                f"[auto] Skipping ChatGPT subscription token from {auth.source} "
+                f"(chatgpt.com endpoint not yet supported — roadmap)"
+            )
+        elif prov_name == "groq":
+            p = GroqProvider(name="groq", base_url="https://api.groq.com/openai/v1", api_key=auth.token)
+            providers["groq"] = p
+            provider_types["groq"] = "cloud"
+            provider_costs["groq"] = 0.0003
+            logger.info(f"[auto] Registered Groq from {auth.source}")
+        elif prov_name == "together":
+            p = TogetherProvider(name="together", base_url="https://api.together.xyz/v1", api_key=auth.token)
+            providers["together"] = p
+            provider_types["together"] = "cloud"
+            provider_costs["together"] = 0.0008
+            logger.info(f"[auto] Registered Together from {auth.source}")
+        elif prov_name == "gemini":
+            p = GeminiProvider(name="gemini", api_key=auth.token)
+            providers["gemini"] = p
+            provider_types["gemini"] = "cloud"
+            provider_costs["gemini"] = 0.0007
+            logger.info(f"[auto] Registered Gemini from {auth.source}")
+        else:
+            logger.debug(f"[auto] No registration handler for {prov_name}")
+    except Exception as e:
+        logger.warning(f"[auto] Failed to register {prov_name}: {e}")
 
 
 
@@ -251,6 +319,21 @@ async def lifespan(app: FastAPI):
         # Legacy compat
         backends[name] = GroqBackend(base_url=base_url, api_key=api_key)
 
+    # ── Subscription inheritance / zero-config auto-discovery ─────────────
+    # Read existing CLI auth (Claude Code OAuth, Codex auth.json, env vars,
+    # local servers) and register any provider not already configured. Lets a
+    # Claude Pro/Max subscription serve any OpenAI-compatible client with no
+    # API key setup.
+    if os.getenv("NB_DISABLE_AUTO_DISCOVERY") != "1":
+        try:
+            discovered = discover_all()
+            for prov_name, auth in discovered.items():
+                if prov_name in providers:
+                    continue  # config takes precedence
+                _register_discovered(prov_name, auth)
+        except Exception as e:
+            logger.warning(f"Auto-discovery failed: {e}")
+
     # Give the policy engine access to provider objects for model-support scoring
     policy_engine.set_providers(providers)
 
@@ -366,12 +449,27 @@ async def chat_completions(request: Request):
                     try:
                         start_req = time.perf_counter()
                         first = True
+                        token_count = 0
                         async for chunk in prov.chat(body, stream=True):
                             if first:
                                 first = False
+                            if chunk.startswith("data:") and "[DONE]" not in chunk:
+                                token_count += 1  # rough proxy; 1 chunk ≈ 1 token
                             yield chunk
+                        elapsed_ms = (time.perf_counter() - start_req) * 1000
                         if policy_engine:
-                            policy_engine.record_latency(bname, (time.perf_counter() - start_req) * 1000)
+                            policy_engine.record_latency(bname, elapsed_ms)
+                            ptype = provider_types.get(bname, "cloud")
+                            cost = (
+                                policy_engine.compute_local_cost(token_count, elapsed_ms)
+                                if ptype == "local"
+                                else provider_costs.get(bname, 0.0) * token_count / 1000
+                            )
+                            cheapest_cloud = min(
+                                (v for k, v in provider_costs.items() if provider_types.get(k) == "cloud"),
+                                default=0.0,
+                            )
+                            policy_engine.record_cost(bname, ptype, cost, cheapest_cloud * token_count / 1000)
                         policy_engine.record_success(bname)
                         nb_metrics.record_request(bname, decision.policy_mode.value, "ok")
                     except ProviderError as e:
@@ -425,8 +523,24 @@ async def chat_completions(request: Request):
                 async for chunk in provider.chat(body, stream=False):
                     result_text += chunk
 
+                elapsed_ms = (time.perf_counter() - start_req) * 1000
                 if policy_engine:
-                    policy_engine.record_latency(backend_name, (time.perf_counter() - start_req) * 1000)
+                    policy_engine.record_latency(backend_name, elapsed_ms)
+                    try:
+                        resp_tokens = json.loads(result_text).get("usage", {}).get("completion_tokens", 0) or 0
+                    except Exception:
+                        resp_tokens = 0
+                    ptype = provider_types.get(backend_name, "cloud")
+                    cost = (
+                        policy_engine.compute_local_cost(resp_tokens, elapsed_ms)
+                        if ptype == "local"
+                        else provider_costs.get(backend_name, 0.0) * resp_tokens / 1000
+                    )
+                    cheapest_cloud = min(
+                        (v for k, v in provider_costs.items() if provider_types.get(k) == "cloud"),
+                        default=0.0,
+                    )
+                    policy_engine.record_cost(backend_name, ptype, cost, cheapest_cloud * resp_tokens / 1000)
                 policy_engine.record_success(backend_name)
                 nb_metrics.record_request(backend_name, decision.policy_mode.value, "ok")
 
@@ -477,6 +591,218 @@ async def chat_completions(request: Request):
     )
 
 
+@app.post("/v1/messages")
+async def anthropic_messages(request: Request):
+    """Anthropic Messages API compatibility endpoint.
+
+    Translates Claude Code / Anthropic SDK requests into OpenAI chat completions,
+    routes through NeuralBroker, and translates the response back.
+    """
+    _check_auth(request)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return Response(
+            content=json.dumps(_openai_error(400, "Invalid JSON body", "invalid_request_error")),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    # ── Translate Anthropic → OpenAI ─────────────────────────────────────────
+    openai_msgs = []
+    system_text = body.get("system", "")
+    if system_text:
+        if isinstance(system_text, list):
+            system_text = " ".join(
+                b.get("text", "") for b in system_text if isinstance(b, dict)
+            )
+        openai_msgs.append({"role": "system", "content": system_text})
+
+    for msg in body.get("messages", []):
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        parts.append(block.get("text", ""))
+                    elif block.get("type") == "tool_result":
+                        parts.append(str(block.get("content", "")))
+                    elif block.get("type") == "tool_use":
+                        continue  # tool_use blocks handled via tool_calls below
+            content = "\n".join(parts)
+        openai_msgs.append({"role": msg["role"], "content": content})
+
+    oai_body = {
+        "model": body.get("model", "claude-sonnet-4-6"),
+        "messages": openai_msgs,
+        "stream": body.get("stream", False),
+        "max_tokens": body.get("max_tokens", 8192),
+    }
+    if "temperature" in body:
+        oai_body["temperature"] = body["temperature"]
+    if "top_p" in body:
+        oai_body["top_p"] = body["top_p"]
+
+    stream = oai_body["stream"]
+    vram_snapshot = poller.latest()
+
+    if vram_snapshot:
+        total = vram_snapshot.vram_used_gb + vram_snapshot.vram_free_gb
+        if total > 0:
+            nb_metrics.set_vram_utilization(
+                vram_snapshot.gpu_id, vram_snapshot.vram_used_gb / total
+            )
+
+    decision = await policy_engine.decide_async(
+        request_body=oai_body,
+        vram=vram_snapshot,
+        available_providers=list(providers.keys()),
+        provider_types=provider_types,
+        provider_costs=provider_costs,
+        requested_model=oai_body.get("model", ""),
+    )
+
+    nb_metrics.record_routing_latency(decision.latency_ms)
+
+    if not decision.backend_chosen:
+        return Response(
+            content=json.dumps({"type": "error", "error": {"type": "overloaded_error", "message": "No available providers"}}),
+            status_code=503,
+            media_type="application/json",
+        )
+
+    backends_to_try = [decision.backend_chosen] + decision.fallback_chain
+    last_error = None
+
+    for backend_name in backends_to_try:
+        if backend_name not in providers:
+            continue
+        provider = providers[backend_name]
+
+        try:
+            if stream:
+                # Stream SSE in Anthropic format
+                async def _anthropic_stream(prov=provider, bname=backend_name, req_body=oai_body):
+                    msg_id = f"msg_{int(time.time())}"
+                    model_name = req_body.get("model", "")
+                    yield f"data: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'content': [], 'model': model_name, 'stop_reason': None, 'stop_sequence': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
+                    yield f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
+                    try:
+                        async for chunk in prov.chat(req_body, stream=True):
+                            # chunk is SSE line like "data: {...}\n\n"
+                            if not chunk.startswith("data:"):
+                                continue
+                            raw = chunk[5:].strip()
+                            if raw == "[DONE]":
+                                break
+                            try:
+                                parsed = json.loads(raw)
+                                delta_content = (
+                                    parsed.get("choices", [{}])[0]
+                                    .get("delta", {})
+                                    .get("content") or ""
+                                )
+                                if delta_content:
+                                    yield f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta_content}})}\n\n"
+                            except Exception:
+                                pass
+                        policy_engine.record_success(bname)
+                        nb_metrics.record_request(bname, decision.policy_mode.value, "ok")
+                    except Exception as e:
+                        policy_engine.record_error(bname)
+                        logger.error(f"Anthropic stream error from {bname}: {e}")
+                    yield f"data: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
+                    yield f"data: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': 0}})}\n\n"
+                    yield f"data: {json.dumps({'type': 'message_stop'})}\n\n"
+
+                return StreamingResponse(
+                    _anthropic_stream(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "X-NB-Backend": backend_name,
+                        "X-NB-RoutingMode": decision.policy_mode.value,
+                    },
+                )
+            else:
+                # Non-streaming — collect and translate back to Anthropic format
+                result_text = ""
+                start_req = time.perf_counter()
+                async for chunk in provider.chat(oai_body, stream=False):
+                    result_text += chunk
+
+                policy_engine.record_latency(backend_name, (time.perf_counter() - start_req) * 1000)
+                policy_engine.record_success(backend_name)
+                nb_metrics.record_request(backend_name, decision.policy_mode.value, "ok")
+
+                # Parse OpenAI response and re-wrap as Anthropic response
+                try:
+                    oai_resp = json.loads(result_text)
+                    content_text = (
+                        oai_resp.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                    ) or ""
+                    usage = oai_resp.get("usage", {})
+                    anthropic_resp = {
+                        "id": oai_resp.get("id", f"msg_{int(time.time())}"),
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": content_text}],
+                        "model": oai_resp.get("model", oai_body.get("model", "")),
+                        "stop_reason": "end_turn",
+                        "stop_sequence": None,
+                        "usage": {
+                            "input_tokens": usage.get("prompt_tokens", 0),
+                            "output_tokens": usage.get("completion_tokens", 0),
+                        },
+                    }
+                except Exception:
+                    anthropic_resp = {
+                        "id": f"msg_{int(time.time())}",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": result_text}],
+                        "model": oai_body.get("model", ""),
+                        "stop_reason": "end_turn",
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 0, "output_tokens": 0},
+                    }
+
+                return Response(
+                    content=json.dumps(anthropic_resp),
+                    media_type="application/json",
+                    headers={
+                        "X-NB-Backend": backend_name,
+                        "X-NB-RoutingMode": decision.policy_mode.value,
+                    },
+                )
+
+        except ProviderError as e:
+            policy_engine.record_error(backend_name)
+            nb_metrics.record_provider_error(backend_name)
+            nb_metrics.record_request(backend_name, decision.policy_mode.value, "error")
+            last_error = e
+            logger.error(f"Provider {backend_name} failed (messages): {e}")
+            continue
+        except Exception as e:
+            policy_engine.record_error(backend_name)
+            nb_metrics.record_provider_error(backend_name)
+            last_error = e
+            logger.error(f"Unexpected error from {backend_name} (messages): {e}")
+            continue
+
+    tried = [b for b in backends_to_try if b in providers]
+    return Response(
+        content=json.dumps({"type": "error", "error": {"type": "overloaded_error", "message": f"All providers failed. Tried: {', '.join(tried)}. Last: {last_error}"}}),
+        status_code=503,
+        media_type="application/json",
+        headers={"X-NB-Backends-Tried": ",".join(tried)},
+    )
+
+
 @app.get("/v1/models")
 async def list_models(request: Request):
     """List available models from all configured providers."""
@@ -513,6 +839,31 @@ async def nb_vram():
             "utilization": round(snap.vram_used_gb / total, 3) if total > 0 else 0,
             "available": True,
         }
+    }
+
+
+@app.get("/nb/discovered")
+async def nb_discovered():
+    """Return providers auto-discovered from existing CLI auth state.
+
+    Shows whether subscription inheritance found Claude Pro/Max, Codex auth,
+    Ollama, llama.cpp, or env API keys.
+    """
+    from neuralbrok.auth_discovery import discover_all
+    found = discover_all()
+    return {
+        "providers": {
+            name: {
+                "auth_type": a.auth_type,
+                "source": a.source,
+                "subscription": a.subscription,
+                "expires_at": a.expires_at,
+                "extra": a.extra,
+                "registered": name in providers,
+            }
+            for name, a in found.items()
+        },
+        "total": len(found),
     }
 
 

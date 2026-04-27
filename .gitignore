@@ -27,3 +27,4 @@ config.yaml
 
 # Development scratch files
 scratch/
+.PRIVATE_ROADMAP.md

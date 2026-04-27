@@ -36,10 +36,25 @@ class AnthropicProvider(BaseProvider):
         "claude-3-haiku-20240307",
     ]
 
-    def __init__(self, name: str, api_key: str):
+    def __init__(self, name: str, api_key: str, auth_type: str = "api_key"):
         super().__init__(name=name, provider_type="cloud")
         self.api_key = api_key
+        self.auth_type = auth_type  # "api_key" or "oauth_bearer"
         self.base_url = _BASE_URL
+
+    def _auth_headers(self) -> dict:
+        if self.auth_type == "oauth_bearer":
+            return {
+                "Authorization": f"Bearer {self.api_key}",
+                "anthropic-beta": "oauth-2025-04-20",
+                "anthropic-version": _ANTHROPIC_VERSION,
+                "Content-Type": "application/json",
+            }
+        return {
+            "x-api-key": self.api_key,
+            "anthropic-version": _ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+        }
 
     async def chat(
         self, payload: dict, stream: bool = True
@@ -68,11 +83,7 @@ class AnthropicProvider(BaseProvider):
         if system_content:
             request_body["system"] = system_content
 
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": _ANTHROPIC_VERSION,
-            "Content-Type": "application/json",
-        }
+        headers = self._auth_headers()
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -189,10 +200,7 @@ class AnthropicProvider(BaseProvider):
             async with httpx.AsyncClient(timeout=5.0) as client:
                 r = await client.get(
                     f"{self.base_url}/v1/models",
-                    headers={
-                        "x-api-key": self.api_key,
-                        "anthropic-version": _ANTHROPIC_VERSION,
-                    },
+                    headers=self._auth_headers(),
                 )
                 return r.status_code in (200, 404)  # 404 = reachable but endpoint varies
         except Exception:

@@ -202,11 +202,17 @@ class PolicyEngine:
                     request_body["model"] = cloud_model
                     latency_ms = (time.perf_counter() - start_class) * 1000
                     logger.info(f"[smart→cloud] {cloud_reason} → {cloud_model}")
-                    
-                    local_prov = next((p for p, pt in provider_types.items() if pt == "local"), "ollama")
+
+                    # Pick cheapest configured cloud provider; fall back to any cloud
+                    cloud_provs = [p for p in available_providers if provider_types.get(p) == "cloud"]
+                    if cloud_provs:
+                        cloud_prov = min(cloud_provs, key=lambda p: provider_costs.get(p, 999))
+                    else:
+                        cloud_prov = next((p for p, pt in provider_types.items() if pt == "cloud"), "groq")
+
                     decision = RouteDecision(
-                        backend_chosen=local_prov,
-                        fallback_chain=[p for p in available_providers if p != local_prov],
+                        backend_chosen=cloud_prov,
+                        fallback_chain=[p for p in available_providers if p != cloud_prov],
                         vram_at_decision=vram,
                         policy_mode=self.mode,
                         classified_as=",".join(categories) + ":cloud",
@@ -215,7 +221,7 @@ class PolicyEngine:
                         timestamp=datetime.now(timezone.utc)
                     )
                     self._routing_log.append({
-                        "backend": local_prov,
+                        "backend": cloud_prov,
                         "mode": "smart",
                         "reason": f"smart→cloud: {cloud_reason} → {cloud_model}",
                         "classified_as": categories,
@@ -424,12 +430,12 @@ class PolicyEngine:
     ) -> float:
         """Compute electricity cost for a local inference request.
 
-        Formula: (tokens/1000) * (gpu_watts/1000) * $/kWh * (latency_ms/3_600_000)
+        Formula: (gpu_watts/1000) * $/kWh * (latency_ms/3_600_000)
+        Tokens aren't a factor — cost is purely time × power × rate.
         """
         routing = self.config.routing
         cost = (
-            (tokens / 1000)
-            * (routing.gpu_tdp_watts / 1000)
+            (routing.gpu_tdp_watts / 1000)
             * routing.electricity_kwh_price
             * (latency_ms / 3_600_000)
         )
@@ -578,6 +584,19 @@ class PolicyEngine:
                 cost_per_1k=cost,
             ))
 
+        # Re-rank cloud providers by cost so cheapest wins clearly.
+        # _score_cost_mode gives all clouds the same flat range; post-process to
+        # spread them out: cheapest cloud → its existing score, others scaled down.
+        if self.mode == PolicyMode.COST:
+            cloud_scored = [(s, s.cost_per_1k) for s in scored if s.provider_type == "cloud" and s.score > 0]
+            if len(cloud_scored) > 1:
+                cloud_scored.sort(key=lambda x: x[1])  # cheapest first
+                cheapest_cost = cloud_scored[0][1]
+                for ps, c in cloud_scored:
+                    if cheapest_cost > 0:
+                        ps.score = ps.score * (cheapest_cost / max(c, cheapest_cost * 0.001))
+                    # if all same cost, leave scores unchanged
+
         return scored
 
     def _score_cost_mode(
@@ -595,11 +614,11 @@ class PolicyEngine:
                 return -0.5  # VRAM full — penalize local
         else:
             if vram_util >= threshold:
-                # Cloud providers compete on cost (lower cost = higher score)
-                return max(0.01, 0.8 - cost * 1000)
+                # Cloud providers compete on cost — cheapest gets 0.8, others ranked down
+                return 0.8
             else:
                 # VRAM available — cloud is backup only
-                return max(0.01, 0.3 - cost * 1000)
+                return 0.3
 
     def _score_speed_mode(self, is_local: bool) -> float:
         """Speed mode: always local. Cloud gets -1 (never unless all local fail)."""

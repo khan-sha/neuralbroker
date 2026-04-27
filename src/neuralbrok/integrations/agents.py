@@ -216,12 +216,12 @@ def _setup_codex(project_dir: Path, nb_url: str, api_key: str, global_dir: bool,
     env_path = project_dir / ".env"
     config_path = Path.home() / ".codex" / "config.json"
     
-    env_line = f"\nCODEX_API_BASE={nb_url}/v1\nCODEX_API_KEY={api_key}\n"
+    env_line = f"\nOPENAI_BASE_URL={nb_url}/v1\nOPENAI_API_KEY={api_key}\n"
     if not dry_run:
         with open(env_path, "a" if env_path.exists() else "w") as f:
             f.write(env_line)
-    
-    config = {"endpoint": f"{nb_url}/v1", "key": api_key}
+
+    config = {"provider": {"name": "openai", "baseURL": f"{nb_url}/v1", "apiKey": api_key}}
     return [env_path, _write_json(config_path, config, dry_run, force)]
 
 def _setup_amp(project_dir: Path, nb_url: str, api_key: str, global_dir: bool, dry_run: bool, force: bool) -> List[Path]:
@@ -294,7 +294,7 @@ AGENT_REGISTRY: Dict[str, AgentIntegration] = {
     "gemini-cli": AgentIntegration("Gemini CLI", "gemini-cli", 1, [".gemini/settings.json"], setup_fn=_setup_gemini_cli, launch_cmd="gemini", launch_env_vars={"GOOGLE_API_BASE": "{nb_url}/v1", "GOOGLE_API_KEY": "{api_key}"}),
     "opencode": AgentIntegration("OpenCode", "opencode", 1, ["opencode.json"], setup_fn=_setup_opencode, launch_cmd="opencode", launch_env_vars={"OPENAI_API_BASE": "{nb_url}/v1", "OPENAI_API_KEY": "{api_key}"}),
     "warp": AgentIntegration("Warp", "warp", 1, ["~/.warp/preferences.yaml"], setup_fn=_setup_warp, launch_cmd="warp", launch_env_vars={"WARP_AI_PROXY": "{nb_url}/v1"}),
-    "codex": AgentIntegration("Codex", "codex", 1, [".env", "~/.codex/config.json"], setup_fn=_setup_codex, launch_cmd="codex", launch_env_vars={"CODEX_API_BASE": "{nb_url}/v1", "CODEX_API_KEY": "{api_key}"}),
+    "codex": AgentIntegration("Codex", "codex", 1, [".env", "~/.codex/config.json"], setup_fn=_setup_codex, launch_cmd="codex", launch_env_vars={"OPENAI_BASE_URL": "{nb_url}/v1", "OPENAI_API_KEY": "{api_key}"}),
     "amp": AgentIntegration("Amp", "amp", 1, ["~/.amp/config.json"], setup_fn=_setup_amp, launch_cmd="amp", launch_env_vars={"OPENAI_API_BASE": "{nb_url}/v1", "OPENAI_API_KEY": "{api_key}"}),
     "kimi-code": AgentIntegration("Kimi Code", "kimi-code", 1, [".kimi/config.json", ".env"], setup_fn=_setup_kimi_code, launch_cmd="kimi", launch_env_vars={"KIMI_API_BASE": "{nb_url}/v1", "KIMI_API_KEY": "{api_key}"}),
     "firebender": AgentIntegration("Firebender", "firebender", 1, [".firebender/config.json"], setup_fn=_setup_firebender, launch_cmd="firebender", launch_env_vars={"OPENAI_API_BASE": "{nb_url}/v1", "OPENAI_API_KEY": "{api_key}"}),
