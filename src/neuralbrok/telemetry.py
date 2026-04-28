@@ -31,9 +31,12 @@ class VramPoller:
 
     async def start(self) -> None:
         """Initialize telemetry and launch background polling task."""
-        vendor = self._telemetry.initialize()
-        self._initialized = True
-        logger.info(f"Hardware telemetry active — vendor: {vendor}")
+        try:
+            vendor = self._telemetry.initialize()
+            self._initialized = True
+            logger.info(f"Hardware telemetry active — vendor: {vendor}")
+        except Exception as e:
+            logger.warning(f"Hardware telemetry init failed: {e} — using fallback")
         
         self._task = asyncio.create_task(self._poll_loop())
 

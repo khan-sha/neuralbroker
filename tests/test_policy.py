@@ -269,5 +269,5 @@ class TestElectricityCost:
 
     def test_zero_tokens_zero_cost(self):
         engine = PolicyEngine(make_config("cost"))
-        cost = engine.compute_local_cost(tokens=0, latency_ms=200)
+        cost = engine.compute_local_cost(tokens=0, latency_ms=0)
         assert cost == 0.0

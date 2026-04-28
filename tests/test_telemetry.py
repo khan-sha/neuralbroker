@@ -73,18 +73,18 @@ class TestVramPollerFallback:
 
     @pytest.mark.asyncio
     async def test_fallback_snapshot_on_nvml_init_failure(self):
-        with patch("neuralbrok.telemetry.HAS_PYNVML", True):
-            mock_pynvml = MagicMock()
-            mock_pynvml.nvmlInit.side_effect = Exception("no driver")
-            mock_pynvml.NVMLError = Exception
-            with patch("neuralbrok.telemetry.pynvml", mock_pynvml):
-                poller = VramPoller(poll_interval_s=60)
-                await poller.start()
+        with patch("neuralbrok.telemetry.HardwareTelemetry") as MockHT:
+            mock_ht = MagicMock()
+            mock_ht.initialize.side_effect = Exception("no driver")
+            MockHT.return_value = mock_ht
 
-                snap = poller.latest()
-                assert snap.vram_free_gb == 8.0  # fallback
+            poller = VramPoller(poll_interval_s=60)
+            await poller.start()  # should not raise
 
-                await poller.stop()
+            snap = poller.latest()
+            assert snap.vram_free_gb == 8.0  # fallback
+
+            await poller.stop()
 
 
 # ── live snapshot (mocked pynvml) ─────────────────────────────────────────────
@@ -93,42 +93,43 @@ class TestVramPollerLive:
 
     @pytest.mark.asyncio
     async def test_snapshot_reflects_gpu_memory(self):
-        used = int(6 * GB)
-        free = int(4 * GB)
+        with patch("neuralbrok.telemetry.HardwareTelemetry") as MockHT:
+            mock_ht = MagicMock()
+            mock_ht.initialize.return_value = "nvidia"
+            mock_ht.get_vram_snapshot.return_value = {"used": 6.0, "free": 4.0}
+            MockHT.return_value = mock_ht
 
-        with patch("neuralbrok.telemetry.HAS_PYNVML", True):
-            mock_pynvml = make_nvml_mock(used, free)
-            with patch("neuralbrok.telemetry.pynvml", mock_pynvml):
-                poller = VramPoller(poll_interval_s=0.05)
-                poller._nvml_initialized = True  # skip real nvmlInit
-                await poller.start()
+            poller = VramPoller(poll_interval_s=0.05)
+            await poller.start()
 
-                await asyncio.sleep(0.15)  # let loop tick 2-3x
+            await asyncio.sleep(0.15)  # let loop tick 2-3x
 
-                snap = poller.latest()
-                assert abs(snap.vram_used_gb - 6.0) < 0.01
-                assert abs(snap.vram_free_gb - 4.0) < 0.01
+            snap = poller.latest()
+            assert abs(snap.vram_used_gb - 6.0) < 0.01
+            assert abs(snap.vram_free_gb - 4.0) < 0.01
 
-                await poller.stop()
+            await poller.stop()
 
     @pytest.mark.asyncio
     async def test_latest_does_not_call_pynvml(self):
-        with patch("neuralbrok.telemetry.HAS_PYNVML", True):
-            mock_pynvml = make_nvml_mock(int(4 * GB), int(6 * GB))
-            with patch("neuralbrok.telemetry.pynvml", mock_pynvml):
-                poller = VramPoller(poll_interval_s=60)
-                poller._nvml_initialized = True
-                await poller.start()
+        with patch("neuralbrok.telemetry.HardwareTelemetry") as MockHT:
+            mock_ht = MagicMock()
+            mock_ht.initialize.return_value = "nvidia"
+            mock_ht.get_vram_snapshot.return_value = {"used": 4.0, "free": 6.0}
+            MockHT.return_value = mock_ht
 
-                call_count_before = mock_pynvml.nvmlDeviceGetMemoryInfo.call_count
-                for _ in range(100):
-                    poller.latest()
-                call_count_after = mock_pynvml.nvmlDeviceGetMemoryInfo.call_count
+            poller = VramPoller(poll_interval_s=60)
+            await poller.start()
 
-                # latest() must not call pynvml — only the background task does
-                assert call_count_after == call_count_before
+            call_count_before = mock_ht.get_vram_snapshot.call_count
+            for _ in range(100):
+                poller.latest()
+            call_count_after = mock_ht.get_vram_snapshot.call_count
 
-                await poller.stop()
+            # latest() must not call telemetry — only the background task does
+            assert call_count_after == call_count_before
+
+            await poller.stop()
 
 
 # ── stale snapshot warning ────────────────────────────────────────────────────

@@ -161,7 +161,7 @@ def detect_device() -> DeviceProfile:
         )
 
     # ── Unified Telemetry Detection ──────────────────────────────────
-    from neuralbrok.hardware import HardwareTelemetry, lookup_gpu
+    from neuralbrok.hardware import HardwareTelemetry
     telemetry = HardwareTelemetry()
     vendor = telemetry.initialize()
     

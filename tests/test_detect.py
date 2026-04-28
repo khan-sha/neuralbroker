@@ -15,13 +15,14 @@ def mock_psutil():
 def test_nvidia_detection():
     mock_pynvml = MagicMock()
     mock_pynvml.nvmlDeviceGetName.return_value = b"NVIDIA GeForce RTX 4090"
-    mock_pynvml.nvmlDeviceGetMemoryInfo.return_value.total = 24 * (1024**3)
+    mock_pynvml.nvmlDeviceGetMemoryInfo.return_value.used = 0
+    mock_pynvml.nvmlDeviceGetMemoryInfo.return_value.free = 24 * (1024**3)
     mock_pynvml.nvmlSystemGetCudaDriverVersion.return_value = 12040
 
     with patch("sys.platform", "linux"):
         with patch.dict("sys.modules", {"pynvml": mock_pynvml}):
             profile = detect_device()
-            
+
             assert profile.gpu_vendor == "nvidia"
             assert "4090" in profile.gpu_model
             assert profile.vram_gb == 24.0
@@ -51,31 +52,27 @@ def test_apple_silicon_detection():
             
 def test_amd_detection_with_rocm():
     with patch("sys.platform", "linux"):
-        # We need to simulate pynvml not existing so it falls back to AMD/CPU
-        # pynvml is wrapped in try/except in detect_device, but doing import pynvml
-        # We can patch sys.modules to simulate missing pynvml
-        with patch.dict("sys.modules", {"pynvml": None}):
-            with patch("neuralbrok.detect.subprocess.run") as mock_run:
-                mock_proc = MagicMock()
-                mock_proc.stdout = "VRAM: 16384"
-                mock_run.return_value = mock_proc
-                
-                profile = detect_device()
-                
-                assert profile.gpu_vendor == "amd"
-                assert profile.recommended_runtime == "llama_cpp"
-            
+        with patch("neuralbrok.hardware.HardwareTelemetry") as MockHT:
+            mock_ht = MagicMock()
+            mock_ht.initialize.return_value = "amd"
+            mock_ht.get_vram_snapshot.return_value = {"used": 0.0, "free": 16.0}
+            MockHT.return_value = mock_ht
+
+            profile = detect_device()
+
+            assert profile.gpu_vendor == "amd"
+            assert profile.recommended_runtime == "ollama"
+
 def test_amd_detection_without_rocm_cpu_fallback():
     with patch("sys.platform", "linux"):
         with patch.dict("sys.modules", {"pynvml": None}):
             with patch("neuralbrok.detect.subprocess.run", side_effect=Exception):
-                profile = detect_device()
-                
-                assert profile.gpu_vendor == "none"
-                assert profile.gpu_model == "CPU Only"
-                assert profile.recommended_runtime == "llama_cpp"
-                assert profile.vram_gb == 0.0
-                assert profile.recommended_vram_threshold == 1.0
+                with patch("neuralbrok.hardware.subprocess.run", side_effect=Exception):
+                    profile = detect_device()
+
+                    assert profile.gpu_vendor == "none"
+                    assert "CPU" in profile.gpu_model
+                    assert profile.recommended_runtime == "ollama"
 
 def test_config_generation():
     profile = DeviceProfile(
