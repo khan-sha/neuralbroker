@@ -471,6 +471,15 @@ async def chat_completions(request: Request):
                                 first = False
                             if chunk.startswith("data:") and "[DONE]" not in chunk:
                                 token_count += 1  # rough proxy; 1 chunk ≈ 1 token
+                            # Inject routed backend name into model field
+                            if chunk.startswith("data:") and "[DONE]" not in chunk:
+                                try:
+                                    raw = chunk[5:].strip()
+                                    parsed = json.loads(raw)
+                                    parsed["model"] = f"NeuralBroker:{bname}"
+                                    chunk = f"data: {json.dumps(parsed)}\n\n"
+                                except:
+                                    pass  # Keep original chunk if parsing fails
                             yield chunk
                         elapsed_ms = (time.perf_counter() - start_req) * 1000
                         if policy_engine:
@@ -497,7 +506,7 @@ async def chat_completions(request: Request):
                             "id": "error",
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
-                            "model": body.get("model", ""),
+                            "model": f"NeuralBroker:{bname}",
                             "choices": [{
                                 "index": 0,
                                 "delta": {"content": f"\n\n[NeuralBroker: {bname} error — {e}]"},
@@ -565,6 +574,14 @@ async def chat_completions(request: Request):
                     total = vram_snapshot.vram_used_gb + vram_snapshot.vram_free_gb
                     if total > 0:
                         vram_pct = f"{int(vram_snapshot.vram_used_gb / total * 100)}%"
+
+                # Inject routed backend name into model field
+                try:
+                    resp_json = json.loads(result_text)
+                    resp_json["model"] = f"NeuralBroker:{backend_name}"
+                    result_text = json.dumps(resp_json)
+                except:
+                    pass  # Keep original if parsing fails
 
                 return Response(
                     content=result_text,
