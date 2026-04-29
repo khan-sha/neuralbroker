@@ -702,7 +702,7 @@ async def anthropic_messages(request: Request):
                 # Stream SSE in Anthropic format
                 async def _anthropic_stream(prov=provider, bname=backend_name, req_body=oai_body):
                     msg_id = f"msg_{int(time.time())}"
-                    model_name = req_body.get("model", "")
+                    model_name = f"NeuralBroker:{bname}"
                     yield f"data: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'content': [], 'model': model_name, 'stop_reason': None, 'stop_sequence': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
                     yield f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
                     try:
@@ -767,7 +767,7 @@ async def anthropic_messages(request: Request):
                         "type": "message",
                         "role": "assistant",
                         "content": [{"type": "text", "text": content_text}],
-                        "model": oai_resp.get("model", oai_body.get("model", "")),
+                        "model": f"NeuralBroker:{backend_name}",
                         "stop_reason": "end_turn",
                         "stop_sequence": None,
                         "usage": {
@@ -781,7 +781,7 @@ async def anthropic_messages(request: Request):
                         "type": "message",
                         "role": "assistant",
                         "content": [{"type": "text", "text": result_text}],
-                        "model": oai_body.get("model", ""),
+                        "model": f"NeuralBroker:{backend_name}",
                         "stop_reason": "end_turn",
                         "stop_sequence": None,
                         "usage": {"input_tokens": 0, "output_tokens": 0},
