@@ -37,6 +37,25 @@ CLEAR   = "\033[2J\033[H"
 AMBER   = PINK
 GREEN   = MATRIX
 
+# Curated cloud model catalog: (display_name, model_id, provider, description, needs_api_key)
+CLOUD_MODEL_CATALOG = [
+    ("kimi-k2:cloud",        "kimi-k2:cloud",            "ollama-cloud", "1T MoE · coding/reasoning · Ollama Cloud",   False),
+    ("llama4-scout:cloud",   "llama4-scout:cloud",        "ollama-cloud", "109B MoE · fast · Ollama Cloud",             False),
+    ("deepseek-r1:cloud",    "deepseek-r1:cloud",         "ollama-cloud", "685B · deep reasoning · Ollama Cloud",       False),
+    ("qwen3-coder:cloud",    "qwen3-coder:cloud",         "ollama-cloud", "480B coder · Ollama Cloud",                  False),
+    ("gpt-4o",               "gpt-4o",                   "openai",       "OpenAI GPT-4o · top quality",                True),
+    ("gpt-4o-mini",          "gpt-4o-mini",              "openai",       "OpenAI GPT-4o mini · fast + cheap",          True),
+    ("claude-sonnet-4-6",    "claude-sonnet-4-6",        "anthropic",    "Anthropic Claude Sonnet 4.6",                True),
+    ("claude-opus-4-7",      "claude-opus-4-7",          "anthropic",    "Anthropic Claude Opus 4.7 · best quality",   True),
+    ("gemini-2.0-flash",     "gemini-2.0-flash",         "google",       "Google Gemini 2.0 Flash · fast",             True),
+    ("gemini-1.5-pro",       "gemini-1.5-pro",           "google",       "Google Gemini 1.5 Pro · 1M ctx",             True),
+    ("llama-3.3-70b",        "llama-3.3-70b-versatile",  "groq",         "Groq · llama3.3 70B · ultra-fast",           True),
+    ("mixtral-8x7b",         "mixtral-8x7b-32768",       "groq",         "Groq · Mixtral 8x7B · fast MoE",             True),
+    ("deepseek-chat",        "deepseek-chat",            "deepseek",     "DeepSeek V3 · top coding",                   True),
+    ("mistral-large",        "mistral-large-latest",     "mistral",      "Mistral Large · European sovereign",         True),
+    ("command-r-plus",       "command-r-plus",           "cohere",       "Cohere Command R+ · RAG specialist",         True),
+]
+
 def _print_typewriter(text: str, delay: float = 0.002):
     for char in text:
         sys.stdout.write(char)
@@ -104,6 +123,349 @@ class DynamicIntegrationGroup(click.Group):
                     sys.stdout.flush()
                 return _launch
         return None
+
+def _ensure_nb_ready():
+    """Gate: check NeuralBroker config + Ollama before launching claude. Run mini-setup if missing."""
+    config_path = Path.home() / ".neuralbrok" / "config.yaml"
+    ollama_ok = False
+    try:
+        with httpx.Client(timeout=2.0) as c:
+            r = c.get("http://localhost:11434/api/tags")
+            ollama_ok = r.status_code == 200 and bool(r.json().get("models"))
+    except Exception:
+        pass
+
+    config_ok = config_path.exists()
+    if config_ok and ollama_ok:
+        return
+
+    print(f"\n  {MAGENTA}{BOLD}NEURALBROK SETUP REQUIRED{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    if not config_ok:
+        print(f"  {AMBER}⚠  No config at ~/.neuralbrok/config.yaml{RESET}")
+    if not ollama_ok:
+        print(f"  {AMBER}⚠  Ollama not running or no models pulled{RESET}")
+    print()
+
+    mini_options = [
+        ("Local Ollama models", "Install recommended models via Ollama (free, on your GPU)"),
+        ("Cloud model only",    "Use a cloud API — OpenAI, Anthropic, Groq, etc."),
+        ("Skip setup",          "Launch anyway (may fail without a provider)"),
+    ]
+    mini_idx = [0]
+
+    def _draw_mini():
+        sys.stdout.write(f"\033[{len(mini_options)}F")
+        for i, (name, hint) in enumerate(mini_options):
+            marker = f"{MATRIX}▶{RESET}" if i == mini_idx[0] else " "
+            color = PINK if i == mini_idx[0] else DIM
+            bold = BOLD if i == mini_idx[0] else ""
+            sys.stdout.write(f"  {marker} {color}{bold}{name:<30}{RESET}  {DIM}{hint}{RESET}\n")
+        sys.stdout.flush()
+
+    print(f"  {MAGENTA}▸ QUICK SETUP{RESET}  {DIM}↑↓ · Enter{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    for _ in range(len(mini_options)):
+        print()
+    _draw_mini()
+
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            while True:
+                key = msvcrt.getch()
+                if key in (b'\xe0', b'\x00'):
+                    key = msvcrt.getch()
+                    if key == b'H':
+                        mini_idx[0] = max(0, mini_idx[0] - 1)
+                    elif key == b'P':
+                        mini_idx[0] = min(len(mini_options) - 1, mini_idx[0] + 1)
+                elif key == b'\r':
+                    break
+                elif key == b'\x03':
+                    raise KeyboardInterrupt
+                _draw_mini()
+        else:
+            import termios, tty
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                while True:
+                    ch = sys.stdin.read(1)
+                    if ch == '\x03':
+                        raise KeyboardInterrupt
+                    if ch == '\x1b':
+                        ch = sys.stdin.read(2)
+                        if ch == '[A':
+                            mini_idx[0] = max(0, mini_idx[0] - 1)
+                        elif ch == '[B':
+                            mini_idx[0] = min(len(mini_options) - 1, mini_idx[0] + 1)
+                    elif ch in ('\r', '\n'):
+                        break
+                    _draw_mini()
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    except KeyboardInterrupt:
+        print(f"\n  {DIM}Aborted.{RESET}")
+        sys.exit(0)
+
+    print()
+    if mini_idx[0] == 2:
+        print(f"  {DIM}Skipping setup — launching anyway{RESET}\n")
+        return
+    elif mini_idx[0] == 0:
+        _quick_ollama_setup(config_path)
+    else:
+        _quick_cloud_setup(config_path)
+
+
+def _quick_ollama_setup(config_path: Path):
+    """Pull recommended Ollama models and write minimal config."""
+    from neuralbrok.detect import detect_device
+    from neuralbrok.models import get_runnable_models, build_model_catalog
+    from neuralbrok.autoconfig import generate_config
+    import asyncio
+
+    print(f"  {AMBER}◐{RESET}  Detecting hardware...")
+    profile = detect_device()
+    try:
+        live_catalog = asyncio.run(build_model_catalog(profile, show_progress=False))
+        runnable = get_runnable_models(
+            profile.vram_gb, profile.ram_gb, profile.gpu_model, models=live_catalog
+        )
+    except Exception:
+        runnable = get_runnable_models(profile.vram_gb, profile.ram_gb, profile.gpu_model)
+
+    if not runnable:
+        print(f"  {RED}✗  No models fit in VRAM. Try cloud setup instead.{RESET}")
+        return
+
+    from neuralbrok.selector import SmartModelSelector
+    selector = SmartModelSelector(profile.gpu_model, profile.vram_gb, runnable)
+    top = selector.for_workload(["coding", "chat", "reasoning"])[:4]
+
+    print(f"\n  {MAGENTA}▸ RECOMMENDED MODELS{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    for m in top:
+        inst = f"{MATRIX}●{RESET}" if m.is_installed else f"{DIM}○{RESET}"
+        print(f"  {inst}  {PINK}{m.name}{RESET}")
+    print()
+
+    try:
+        sys.stdout.write(f"  {PINK}→{RESET}  Pull these models now? {DIM}[Y/n]{RESET}:  ")
+        sys.stdout.flush()
+        ans = input().strip().lower()
+    except KeyboardInterrupt:
+        ans = "n"
+
+    if ans != "n":
+        for m in top:
+            if not m.is_installed:
+                print(f"  Pulling {PINK}{m.name}{RESET}...")
+                try:
+                    proc = subprocess.Popen(
+                        ["ollama", "pull", m.name],
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                    )
+                    for line in proc.stdout:
+                        if any(k in line.lower() for k in ["pulling", "verifying", "writing", "success"]):
+                            sys.stdout.write(f"  {DIM}{line.rstrip()[:60]}{RESET}\n")
+                    proc.wait()
+                    if proc.returncode == 0:
+                        print(f"  {MATRIX}✓{RESET}  {m.name}")
+                except FileNotFoundError:
+                    print(f"  {RED}✗  ollama not in PATH — install from ollama.ai{RESET}")
+                    return
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_yaml = generate_config(profile)
+    config_yaml += "\nallowed_models:\n" + "".join(f"  - {m.name}\n" for m in top)
+    config_path.write_text(config_yaml)
+    print(f"  {MATRIX}✓{RESET}  Config written\n")
+
+
+def _quick_cloud_setup(config_path: Path):
+    """Pick a cloud provider, enter API key, write minimal config."""
+    _PROVIDERS = [
+        ("openai",    "OPENAI_KEY",    "https://api.openai.com/v1",      "gpt-4o"),
+        ("anthropic", "ANTHROPIC_KEY", "https://api.anthropic.com/v1",   "claude-sonnet-4-6"),
+        ("groq",      "GROQ_KEY",      "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
+        ("deepseek",  "DEEPSEEK_KEY",  "https://api.deepseek.com/v1",    "deepseek-chat"),
+        ("mistral",   "MISTRAL_KEY",   "https://api.mistral.ai/v1",      "mistral-large-latest"),
+    ]
+    prov_idx = [0]
+
+    def _draw_prov():
+        sys.stdout.write(f"\033[{len(_PROVIDERS)}F")
+        for i, (name, _, _, default_model) in enumerate(_PROVIDERS):
+            marker = f"{MATRIX}▶{RESET}" if i == prov_idx[0] else " "
+            color = PINK if i == prov_idx[0] else DIM
+            sys.stdout.write(f"  {marker} {color}{name:<18}{RESET}  {DIM}default: {default_model}{RESET}\n")
+        sys.stdout.flush()
+
+    print(f"  {MAGENTA}▸ CLOUD PROVIDER{RESET}  {DIM}↑↓ · Enter{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    for _ in range(len(_PROVIDERS)):
+        print()
+    _draw_prov()
+
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            while True:
+                key = msvcrt.getch()
+                if key in (b'\xe0', b'\x00'):
+                    key = msvcrt.getch()
+                    if key == b'H':
+                        prov_idx[0] = max(0, prov_idx[0] - 1)
+                    elif key == b'P':
+                        prov_idx[0] = min(len(_PROVIDERS) - 1, prov_idx[0] + 1)
+                elif key == b'\r':
+                    break
+                elif key == b'\x03':
+                    raise KeyboardInterrupt
+                _draw_prov()
+        else:
+            import termios, tty
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                while True:
+                    ch = sys.stdin.read(1)
+                    if ch == '\x03':
+                        raise KeyboardInterrupt
+                    if ch == '\x1b':
+                        ch = sys.stdin.read(2)
+                        if ch == '[A':
+                            prov_idx[0] = max(0, prov_idx[0] - 1)
+                        elif ch == '[B':
+                            prov_idx[0] = min(len(_PROVIDERS) - 1, prov_idx[0] + 1)
+                    elif ch in ('\r', '\n'):
+                        break
+                    _draw_prov()
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    except KeyboardInterrupt:
+        print(f"\n  {DIM}Aborted.{RESET}")
+        sys.exit(0)
+
+    print()
+    pname, env_var, base_url, default_model = _PROVIDERS[prov_idx[0]]
+    existing = os.environ.get(env_var, "")
+    if existing:
+        print(f"  {MATRIX}✓{RESET}  Using existing {DIM}{env_var}{RESET}")
+        api_key = existing
+    else:
+        sys.stdout.write(f"  {PINK}{pname}{RESET} API key:  ")
+        sys.stdout.flush()
+        try:
+            api_key = input().strip()
+        except KeyboardInterrupt:
+            print(f"\n  {DIM}Aborted.{RESET}")
+            sys.exit(0)
+
+    if not api_key:
+        print(f"  {RED}✗  No key provided — cloud setup aborted{RESET}")
+        return
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_yaml = (
+        f"server:\n  host: 0.0.0.0\n  port: 8000\n\n"
+        f"local_nodes: []\n\n"
+        f"cloud_providers:\n"
+        f"  - name: {pname}\n"
+        f"    api_key_env: {env_var}\n"
+        f"    base_url: {base_url}\n\n"
+        f"routing:\n  default_mode: cost\n  cloud_enabled: true\n\n"
+        f"allowed_models:\n  - {default_model}\n"
+    )
+    config_path.write_text(config_yaml)
+
+    env_path = config_path.parent / ".env"
+    existing_env = env_path.read_text() if env_path.exists() else ""
+    if env_var not in existing_env:
+        with open(env_path, "a") as f:
+            f.write(f"\n{env_var}={api_key}\n")
+
+    print(f"  {MATRIX}✓{RESET}  Config written — {PINK}{pname}{RESET} as cloud provider\n")
+
+
+def _arrow_multiselect(items, label_fn, pre_selected=None, max_select=None, title="SELECT"):
+    """Arrow-key ↑↓ nav · Space toggle · Enter confirm. Returns selected items list."""
+    selected = set(pre_selected or [])
+    cursor = [0]
+
+    def draw():
+        sys.stdout.write(f"\033[{len(items)}F")
+        for i, item in enumerate(items):
+            check = f"{MATRIX}[✓]{RESET}" if i in selected else f"{DIM}[ ]{RESET}"
+            arrow = f"{PINK}▶{RESET}" if i == cursor[0] else " "
+            label = label_fn(item, i)
+            sys.stdout.write(f"  {arrow} {check} {label}\n")
+        sys.stdout.flush()
+
+    print(f"  {MAGENTA}{BOLD}▸ {title}{RESET}  {DIM}↑↓ navigate · Space select · Enter confirm{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    for _ in range(len(items)):
+        print()
+    draw()
+
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            while True:
+                key = msvcrt.getch()
+                if key in (b'\xe0', b'\x00'):
+                    key = msvcrt.getch()
+                    if key == b'H':
+                        cursor[0] = max(0, cursor[0] - 1)
+                    elif key == b'P':
+                        cursor[0] = min(len(items) - 1, cursor[0] + 1)
+                elif key == b' ':
+                    if cursor[0] in selected:
+                        selected.discard(cursor[0])
+                    elif max_select is None or len(selected) < max_select:
+                        selected.add(cursor[0])
+                elif key == b'\r':
+                    break
+                elif key == b'\x03':
+                    raise KeyboardInterrupt
+                draw()
+        else:
+            import termios, tty
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                while True:
+                    ch = sys.stdin.read(1)
+                    if ch == '\x03':
+                        raise KeyboardInterrupt
+                    if ch == '\x1b':
+                        ch = sys.stdin.read(2)
+                        if ch == '[A':
+                            cursor[0] = max(0, cursor[0] - 1)
+                        elif ch == '[B':
+                            cursor[0] = min(len(items) - 1, cursor[0] + 1)
+                    elif ch == ' ':
+                        if cursor[0] in selected:
+                            selected.discard(cursor[0])
+                        elif max_select is None or len(selected) < max_select:
+                            selected.add(cursor[0])
+                    elif ch in ('\r', '\n'):
+                        break
+                    draw()
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    except KeyboardInterrupt:
+        print(f"\n  {DIM}Cancelled.{RESET}")
+        sys.exit(0)
+
+    print()
+    return [items[i] for i in sorted(selected)]
+
 
 @click.group(cls=DynamicIntegrationGroup)
 @click.version_option(__version__, "--version", "-V", message="neuralbrok %(version)s")
@@ -248,7 +610,6 @@ def setup():
     print(f"  {MAGENTA}{BOLD}▸ WORKLOAD{RESET}  {DIM}↑↓ arrows · Enter to confirm{RESET}")
     print(f"  {DIM}{'─' * 54}{RESET}")
 
-    MANUAL_IDX = 6  # index of manual option
     options = [
         ("General Chat & Writing",   ["chat", "multilingual"],           "best for conversation, drafting, translation"),
         ("Coding & Software Dev",    ["coding", "reasoning", "tools"],   "optimized for code gen + tool use"),
@@ -256,7 +617,6 @@ def setup():
         ("Vision & Multimodal",      ["vision", "chat"],                 "handles images + mixed media"),
         ("RAG & Document QA",        ["rag", "chat", "reasoning"],       "retrieval-augmented, long context"),
         ("Mixed / All-purpose",      ["chat", "coding", "reasoning"],    "balanced across all tasks"),
-        ("Manual model selection",   ["chat"],                            "pick models yourself from the full list"),
     ]
 
     selected_idx = 0
@@ -264,12 +624,8 @@ def setup():
     def draw_workload_menu():
         sys.stdout.write(f"\033[{len(options)}F")
         for i, (name, _, hint) in enumerate(options):
-            if i == MANUAL_IDX:
-                marker = f"{CYAN}⚙{RESET}" if i == selected_idx else f"{DIM}⚙{RESET}"
-                color  = CYAN if i == selected_idx else DIM
-            else:
-                marker = f"{MATRIX}▶{RESET}" if i == selected_idx else " "
-                color  = PINK if i == selected_idx else DIM
+            marker = f"{MATRIX}▶{RESET}" if i == selected_idx else " "
+            color  = PINK if i == selected_idx else DIM
             active = BOLD if i == selected_idx else ""
             sys.stdout.write(f"  {marker} {color}{active}{name:<30}{RESET}  {DIM}{hint}{RESET}\n")
         sys.stdout.flush()
@@ -319,7 +675,6 @@ def setup():
         selected_idx = 0
 
     workload_name, workload_categories, _hint = options[selected_idx]
-    is_manual = (selected_idx == MANUAL_IDX)
     sys.stdout.write(f"\n  {MATRIX}✓ {RESET}{PINK}{workload_name}{RESET}\n\n")
     sys.stdout.flush()
 
@@ -387,141 +742,100 @@ def setup():
     cloud_models_for_config = []
     use_ollama_cloud = False
 
-    # ── Ollama Cloud fallback (Always offered) ─────────────────────────────
+    # ── Cloud model chooser (multi-select across all providers) ───────────
     cloud_recs = get_cloud_recommendations(profile.vram_gb, workload_categories)
-    use_ollama_cloud = False
-    cloud_models_for_config = []
 
     if hw_tier in ("cpu_only", "very_low") or suggest_cloud:
-        advisory_header = f"  {RED}⚠  Your device might struggle with large local models.{RESET}"
-        advisory_body = f"  {DIM}   Ollama Cloud lets you run frontier models (Kimi K2, Llama 4){RESET}"
-        advisory_body2 = f"  {DIM}   instantly — no VRAM needed, billed per token.{RESET}"
+        print(f"  {RED}⚠  Your device may struggle with large local models.{RESET}")
+        print(f"  {DIM}   Cloud models below need no VRAM — pick any to enable fallback.{RESET}\n")
     else:
-        advisory_header = f"  {MATRIX}✓  Your hardware is great for local models.{RESET}"
-        advisory_body  = f"  {DIM}   However, Ollama Cloud gives you access to 1T+ parameter{RESET}"
-        advisory_body2 = f"  {DIM}   frontier models when local ones fall short.{RESET}"
+        print(f"  {MATRIX}✓  Great hardware for local models.{RESET}")
+        print(f"  {DIM}   Add cloud models below for 1T+ frontier fallback (optional).{RESET}\n")
 
-    print(f"  {MAGENTA}{BOLD}▸ OLLAMA CLOUD OPTION{RESET}")
-    print(f"  {DIM}{'─' * 54}{RESET}")
-    print(advisory_header)
-    print(advisory_body)
-    print(advisory_body2)
-    print()
-    print(f"  {DIM}Top cloud models for your workload:{RESET}")
-    for i, cm in enumerate(cloud_recs[:4]):
-        star = f"{PINK}★{RESET}" if i == 0 else f"{DIM}·{RESET}"
-        tier_badge = f"{MAGENTA}[flagship]{RESET}" if cm.get("tier") == "flagship" else f"{DIM}[standard]{RESET}"
-        print(f"  {star} {CYAN}{cm['tag']:<32}{RESET} {tier_badge}")
-        print(f"     {DIM}{cm['description'][:70]}{RESET}")
-        time.sleep(0.04)
+    # Pre-select Ollama Cloud models that match the current workload
+    ollama_cloud_recs = {cm["tag"] for cm in cloud_recs[:3]}
+    cloud_pre = {i for i, cm in enumerate(CLOUD_MODEL_CATALOG) if cm[0] in ollama_cloud_recs}
 
-    print()
-    print(f"  {DIM}{'─' * 54}{RESET}")
+    def cloud_label_fn(cm, i):
+        name, _model_id, provider, desc, needs_key = cm
+        provider_color = CYAN if provider == "ollama-cloud" else PINK
+        key_note = f"{RED}[API key]{RESET}" if needs_key else f"{MATRIX}[free]{RESET}"
+        return f"{provider_color}{name:<26}{RESET} {DIM}{desc[:42]:<42}{RESET} {key_note}"
 
-    try:
-        sys.stdout.write(
-            f"\n  {PINK}→{RESET}  Enable Ollama Cloud fallback? {DIM}[y/N]{RESET}:  "
-        )
-        sys.stdout.flush()
-        cloud_ans = input().strip().lower()
-    except KeyboardInterrupt:
-        cloud_ans = "n"
+    selected_cloud = _arrow_multiselect(
+        CLOUD_MODEL_CATALOG, cloud_label_fn,
+        pre_selected=cloud_pre,
+        title="CLOUD MODELS  (0 selected = skip cloud)",
+    )
 
-    if cloud_ans == "y":
-        use_ollama_cloud = True
-        cloud_models_for_config = [cm["tag"] for cm in cloud_recs[:3]]
-        print(f"  {MATRIX}✓{RESET} Ollama Cloud enabled — fallback active\n")
+    use_ollama_cloud = bool(selected_cloud)
+    cloud_models_for_config = [cm[1] for cm in selected_cloud]
+    api_key_providers = {}
+
+    # Collect API keys for providers that require them
+    needed_providers = sorted({cm[2] for cm in selected_cloud if cm[4]})
+    _ENV_MAP = {
+        "openai": "OPENAI_KEY", "anthropic": "ANTHROPIC_KEY",
+        "google": "GOOGLE_KEY", "groq": "GROQ_KEY",
+        "deepseek": "DEEPSEEK_KEY", "mistral": "MISTRAL_KEY", "cohere": "COHERE_KEY",
+    }
+    for prov in needed_providers:
+        env_var = _ENV_MAP.get(prov, f"{prov.upper()}_KEY")
+        existing_key = os.environ.get(env_var, "")
+        if existing_key:
+            print(f"  {MATRIX}✓{RESET}  {prov}: using existing {DIM}{env_var}{RESET}")
+            api_key_providers[prov] = (env_var, existing_key)
+        else:
+            sys.stdout.write(f"  {PINK}{prov}{RESET} API key (Enter to skip):  ")
+            sys.stdout.flush()
+            try:
+                key = input().strip()
+            except KeyboardInterrupt:
+                key = ""
+            if key:
+                api_key_providers[prov] = (env_var, key)
+                print(f"  {MATRIX}✓{RESET}  {prov} key saved")
+            else:
+                print(f"  {DIM}{prov} skipped — its models removed from selection{RESET}")
+                cloud_models_for_config = [
+                    cm[1] for cm in selected_cloud
+                    if not (cm[2] == prov and cm[4])
+                ]
+
+    if use_ollama_cloud and cloud_models_for_config:
+        print(f"  {MATRIX}✓{RESET}  {len(cloud_models_for_config)} cloud model(s) enabled\n")
     else:
+        use_ollama_cloud = False
         print(f"  {DIM}Cloud skipped — local-only mode{RESET}\n")
 
-    # ── Model selection (manual or auto) ───────────────────────────────────
+    # ── Arrow-key model multi-select (recommended pre-checked) ─────────────
     selector = SmartModelSelector(device_key, profile.vram_gb, runnable)
 
-    if is_manual and runnable:
-        def _show_manual_list(models_list):
-            total_v = profile.vram_gb if profile.vram_gb > 0 else 8.0
-            print(f"  {MAGENTA}{BOLD}▸ MANUAL MODEL SELECTION{RESET}  {DIM}pick from runnable models{RESET}")
-            print(f"  {DIM}{'─' * 54}{RESET}")
-            for i, m in enumerate(models_list):
-                ev = m.vram_estimated_gb if m.vram_estimated_gb > 0 else m.vram_gb
-                tps = get_tok_per_sec(m, device_key, bandwidth=bw)
-                inst = f"{MATRIX}●{RESET}" if m.is_installed else f"{DIM}○{RESET}"
-                bar = _get_vram_bar(ev, total_v, width=10)
-                caps = ",".join(m.capabilities[:3])
-                print(f"  {DIM}{i+1:>2}.{RESET} {inst} {PINK}{m.name:<25}{RESET} {bar} {DIM}{ev:.1f}GB  {tps:.0f}tok/s  [{caps}]{RESET}")
-            print(f"  {DIM}{'─' * 54}{RESET}")
+    if runnable:
+        auto_top = selector.for_workload(workload_categories)
+        auto_indices = {i for i, m in enumerate(runnable) if m in auto_top[:4]}
 
-        _show_manual_list(runnable)
+        total_vram_for_bar = profile.vram_gb if profile.vram_gb > 0 else 8.0
 
-        while True:
-            try:
-                sys.stdout.write(
-                    f"\n  {PINK}Select:{RESET} {DIM}numbers (1,3,5)  ·  "
-                    f"p <model> pull from Ollama  ·  Enter = top-4{RESET}\n"
-                    f"  {PINK}>{RESET} "
-                )
-                sys.stdout.flush()
-                raw = input().strip()
-            except KeyboardInterrupt:
-                print(f"\n  {DIM}Setup cancelled.{RESET}")
-                sys.exit(0)
+        def model_label_fn(m, i):
+            ev = m.vram_estimated_gb if m.vram_estimated_gb > 0 else m.vram_gb
+            tps = get_tok_per_sec(m, device_key, bandwidth=bw)
+            inst = f"{MATRIX}●{RESET}" if m.is_installed else f"{DIM}○{RESET}"
+            bar = _get_vram_bar(ev, total_vram_for_bar, width=8)
+            return f"{inst} {PINK}{m.name:<26}{RESET} {bar} {DIM}{ev:.1f}GB  {tps:.0f}t/s{RESET}"
 
-            # Pull command: "p qwen3:14b" / "pull qwen3:14b" / "ollama pull qwen3:14b"
-            pull_match = None
-            if raw.lower().startswith("ollama pull "):
-                pull_match = raw[len("ollama pull "):].strip()
-            elif raw.lower().startswith("pull "):
-                pull_match = raw[5:].strip()
-            elif raw.lower().startswith("p "):
-                pull_match = raw[2:].strip()
-
-            if pull_match:
-                print(f"\n  {AMBER}▸ Pulling {PINK}{pull_match}{RESET} from Ollama...\n")
-                try:
-                    proc = subprocess.Popen(
-                        ["ollama", "pull", pull_match],
-                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-                    )
-                    for line in proc.stdout:
-                        line = line.rstrip()
-                        if any(k in line.lower() for k in ["pulling", "verifying", "writing", "success", "error"]):
-                            sys.stdout.write(f"  {DIM}{line}{RESET}\n")
-                            sys.stdout.flush()
-                    proc.wait()
-                    if proc.returncode == 0:
-                        print(f"\n  {MATRIX}✓{RESET} {PINK}{pull_match}{RESET} pulled. Rescanning models...\n")
-                        from neuralbrok.models import get_runnable_models, build_model_catalog
-                        runnable = get_runnable_models(profile.vram_gb, device_key=device_key)
-                        selector.runnable = runnable
-                        _show_manual_list(runnable)
-                    else:
-                        print(f"  {RED}✗ Pull failed — check model name and try again{RESET}")
-                except FileNotFoundError:
-                    print(f"  {RED}✗ ollama not found in PATH{RESET}")
-                except Exception as e:
-                    print(f"  {RED}✗ Pull error: {e}{RESET}")
-                continue
-
-            # Number selection
-            if raw:
-                chosen = []
-                for tok in raw.split(","):
-                    try:
-                        idx = int(tok.strip()) - 1
-                        if 0 <= idx < len(runnable):
-                            chosen.append(runnable[idx])
-                    except ValueError:
-                        pass
-                ranked_models = chosen if chosen else runnable[:4]
-            else:
-                ranked_models = runnable[:4]
-            break
-
-        print(f"  {MATRIX}✓{RESET} {len(ranked_models)} model(s) selected\n")
-    else:
-        ranked_models = selector.for_workload(workload_categories)
+        print(f"  {DIM}★ = recommended for your workload. Space to toggle, Enter to confirm.{RESET}\n")
+        ranked_models = _arrow_multiselect(
+            runnable, model_label_fn,
+            pre_selected=auto_indices,
+            max_select=6,
+            title="MODEL SELECTION",
+        )
         if not ranked_models:
-            ranked_models = runnable[:4]
+            ranked_models = auto_top[:4]
+            print(f"  {DIM}Nothing selected — using top-4 recommendations{RESET}\n")
+    else:
+        ranked_models = []
 
     rec_models_names = [m.name for m in ranked_models[:4]]
 
@@ -807,112 +1121,17 @@ def setup():
                 print("  Start Ollama first:  ollama serve")
                 print("  Then pull models and run: neuralbrok start")
 
-    # Step 7 - Cloud provider API key configuration
-    print()
-    providers = [
-        ("openai",      "OPENAI_KEY",       "https://api.openai.com/v1"),
-        ("anthropic",   "ANTHROPIC_KEY",    "https://api.anthropic.com/v1"),
-        ("google",      "GOOGLE_KEY",       "https://generativelanguage.googleapis.com/v1beta"),
-        ("groq",        "GROQ_KEY",         "https://api.groq.com/openai/v1"),
-        ("together",    "TOGETHER_KEY",     "https://api.together.xyz/v1"),
-        ("cerebras",    "CEREBRAS_KEY",     "https://api.cerebras.ai/v1"),
-        ("deepinfra",   "DEEPINFRA_KEY",    "https://api.deepinfra.com/v1/openai"),
-        ("fireworks",   "FIREWORKS_KEY",    "https://api.fireworks.ai/inference/v1"),
-        ("lepton",      "LEPTON_KEY",       "https://api.lepton.ai/v1"),
-        ("novita",      "NOVITA_KEY",       "https://api.novita.ai/v1"),
-        ("hyperbolic",  "HYPERBOLIC_KEY",   "https://api.hyperbolic.xyz/v1"),
-        ("mistral",     "MISTRAL_KEY",      "https://api.mistral.ai/v1"),
-        ("openrouter",  "OPENROUTER_KEY",   "https://openrouter.ai/api/v1"),
-        ("deepseek",    "DEEPSEEK_KEY",     "https://api.deepseek.com/v1"),
-        ("cohere",      "COHERE_KEY",       "https://api.cohere.ai"),
-        ("perplexity",  "PERPLEXITY_KEY",   "https://api.perplexity.ai"),
-        ("ai21",        "AI21_KEY",         "https://api.ai21.com"),
-        ("replicate",   "REPLICATE_KEY",    "https://api.replicate.com/v1"),
-        ("octoai",      "OCTOAI_KEY",       "https://api.octoai.cloud/v1"),
-        ("cloudflare",  "CLOUDFLARE_KEY",   "https://api.cloudflare.com/client/v4"),
-        ("azure",       "AZURE_OPENAI_KEY", ""),
-        ("custom",      "CUSTOM_KEY",       ""),
-    ]
-
-    print(f"  {DIM}Available cloud providers:{RESET}")
-    for i, (name, _, _) in enumerate(providers, 1):
-        print(f"    {DIM}{i:2}.{RESET} {name}")
-    print()
-    print(f"  {DIM}Enter provider numbers to configure, separated by commas.{RESET}")
-    print(f"  {DIM}Example: 1,4,6  — or press Enter to skip all.{RESET}")
-    print()
-
-    try:
-        sys.stdout.write(f"  Configure providers [1-{len(providers)}] or Enter to skip: ")
-        sys.stdout.flush()
-        selection_raw = input().strip()
-    except KeyboardInterrupt:
-        print(f"\n  {DIM}Provider config skipped.{RESET}")
-        selection_raw = ""
-
-    configured_providers = {}
-    if selection_raw:
-        selected_indices = []
-        for tok in selection_raw.split(","):
-            try:
-                idx = int(tok.strip()) - 1
-                if 0 <= idx < len(providers):
-                    selected_indices.append(idx)
-            except ValueError:
-                pass
-
-        for idx in selected_indices:
-            pname, env_var, default_url = providers[idx]
-            try:
-                # API Key
-                sys.stdout.write(f"\n  {AMBER}{BOLD}{pname}{RESET} API key: ")
-                sys.stdout.flush()
-                api_key = input().strip()
-                if not api_key:
-                    print(f"  {DIM}Skipped {pname}{RESET}")
-                    continue
-
-                # Base URL — show default, allow override
-                if pname == "azure":
-                    sys.stdout.write(f"  {pname} base URL (e.g. https://{{resource}}.openai.azure.com/): ")
-                elif pname == "custom":
-                    sys.stdout.write(f"  {pname} base URL (required): ")
-                else:
-                    sys.stdout.write(f"  {pname} base URL [{default_url}]: ")
-                sys.stdout.flush()
-                url_input = input().strip()
-                final_url = url_input if url_input else default_url
-
-                if pname == "custom" and not final_url:
-                    print(f"  {AMBER}⚠ Custom provider needs a base URL — skipped{RESET}")
-                    continue
-
-                configured_providers[pname] = (env_var, final_url, api_key)
-                print(f"  {GREEN}✓ {pname} configured{RESET}")
-
-            except KeyboardInterrupt:
-                print(f"\n  {DIM}Stopped at {pname}. Saving what was configured so far.{RESET}")
-                break
-
-    # Patch config with API keys
-    if configured_providers:
-        try:
-            config_text = config_path.read_text()
-            provider_lines = []
-            for pname, (env_var, base_url, _api_key) in configured_providers.items():
-                provider_lines.append(f"  - name: {pname}")
-                provider_lines.append(f"    api_key_env: {env_var}")
-                if base_url:
-                    provider_lines.append(f"    base_url: {base_url}")
-            pattern = r"cloud_providers:.*?(?=\nrouting:)"
-            replacement = "cloud_providers:\n" + "\n".join(provider_lines) + "\n"
-            config_text = re.sub(pattern, replacement, config_text, flags=re.DOTALL)
-            config_path.write_text(config_text)
-            print(f"\n  {GREEN}✓ {len(configured_providers)} provider(s) saved to config{RESET}")
-        except Exception as e:
-            print(f"\n  {AMBER}⚠ Could not write provider config: {e}{RESET}")
+    # Persist API keys collected during cloud model chooser to ~/.neuralbrok/.env
+    if api_key_providers:
+        env_path = config_path.parent / ".env"
+        existing_env = env_path.read_text() if env_path.exists() else ""
+        with open(env_path, "a") as ef:
+            for prov, (env_var, key) in api_key_providers.items():
+                if env_var not in existing_env:
+                    ef.write(f"\n{env_var}={key}\n")
+        print(f"  {MATRIX}✓{RESET}  {len(api_key_providers)} API key(s) saved to ~/.neuralbrok/.env\n")
     else:
-        print(f"  {DIM}No providers configured — add keys later in ~/.neuralbrok/config.yaml{RESET}")
+        print(f"  {DIM}No cloud API keys saved — add later in ~/.neuralbrok/.env{RESET}\n")
 
     # Routing algorithm self-test
     if runnable or use_ollama_cloud:
@@ -1766,8 +1985,9 @@ def benchmark(model):
 @click.option("--host", default="localhost", help="NeuralBroker host")
 @click.option("--port", default=8000, help="NeuralBroker port")
 @click.option("--watch", is_flag=True, help="Stream routing decisions in real-time")
-def code(host, port, watch):
-    """Connect Claude Code to NeuralBroker routing context (BETA)."""
+@click.option("--no-setup", "no_setup", is_flag=True, help="Skip Ollama/config pre-flight check")
+def code(host, port, watch, no_setup):
+    """Launch Claude Code routed through NeuralBroker — like `claude` but smarter."""
     import asyncio
     from neuralbrok.integrations import launch_code_with_routing_context
 
@@ -1775,6 +1995,9 @@ def code(host, port, watch):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except AttributeError:
         pass
+
+    if not no_setup:
+        _ensure_nb_ready()
 
     sys.stdout.write(CLEAR)
     sys.stdout.flush()
@@ -1784,7 +2007,7 @@ def code(host, port, watch):
     print(f"  {DIM}║{RESET}  {DIM}01100011 01101100 01100001 01110101 01100100 01100101{RESET}  {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}    {MAGENTA}{BOLD}CLAUDE{RESET}{PINK}{BOLD}CODE{RESET}  ⟷  {MAGENTA}NEURAL{RESET}{PINK}BROKER{RESET}                  {DIM}║{RESET}")
-    print(f"  {DIM}║{RESET}    {DIM}Real-time routing context · BETA integration{RESET}      {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}VRAM-aware routing · local-first · OpenAI-compatible{RESET} {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}    {DIM}Connecting to {host}:{port}{RESET}                                {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     print(f"  {DIM}╚{W}╝{RESET}")
