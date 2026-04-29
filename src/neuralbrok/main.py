@@ -478,7 +478,8 @@ async def chat_completions(request: Request):
                                     parsed = json.loads(raw)
                                     parsed["model"] = f"NeuralBroker:{bname}"
                                     chunk = f"data: {json.dumps(parsed)}\n\n"
-                                except:
+                                except Exception as e:
+                                    logger.debug(f"Streaming model injection failed: {e}")
                                     pass  # Keep original chunk if parsing fails
                             yield chunk
                         elapsed_ms = (time.perf_counter() - start_req) * 1000
@@ -578,9 +579,12 @@ async def chat_completions(request: Request):
                 # Inject routed backend name into model field
                 try:
                     resp_json = json.loads(result_text)
+                    original_model = resp_json.get("model", "")
                     resp_json["model"] = f"NeuralBroker:{backend_name}"
                     result_text = json.dumps(resp_json)
-                except:
+                    logger.debug(f"Model injection: {original_model} → NeuralBroker:{backend_name}")
+                except Exception as e:
+                    logger.warning(f"Model injection failed: {e}")
                     pass  # Keep original if parsing fails
 
                 return Response(
