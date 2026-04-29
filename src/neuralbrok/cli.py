@@ -38,22 +38,27 @@ AMBER   = PINK
 GREEN   = MATRIX
 
 # Curated cloud model catalog: (display_name, model_id, provider, description, needs_api_key)
+# Ollama Cloud models require ollama.com login + Pro ($20/mo) or Max ($100/mo) subscription
 CLOUD_MODEL_CATALOG = [
-    ("kimi-k2:cloud",        "kimi-k2:cloud",            "ollama-cloud", "1T MoE · coding/reasoning · Ollama Cloud",   False),
-    ("llama4-scout:cloud",   "llama4-scout:cloud",        "ollama-cloud", "109B MoE · fast · Ollama Cloud",             False),
-    ("deepseek-r1:cloud",    "deepseek-r1:cloud",         "ollama-cloud", "685B · deep reasoning · Ollama Cloud",       False),
-    ("qwen3-coder:cloud",    "qwen3-coder:cloud",         "ollama-cloud", "480B coder · Ollama Cloud",                  False),
-    ("gpt-4o",               "gpt-4o",                   "openai",       "OpenAI GPT-4o · top quality",                True),
-    ("gpt-4o-mini",          "gpt-4o-mini",              "openai",       "OpenAI GPT-4o mini · fast + cheap",          True),
-    ("claude-sonnet-4-6",    "claude-sonnet-4-6",        "anthropic",    "Anthropic Claude Sonnet 4.6",                True),
-    ("claude-opus-4-7",      "claude-opus-4-7",          "anthropic",    "Anthropic Claude Opus 4.7 · best quality",   True),
-    ("gemini-2.0-flash",     "gemini-2.0-flash",         "google",       "Google Gemini 2.0 Flash · fast",             True),
-    ("gemini-1.5-pro",       "gemini-1.5-pro",           "google",       "Google Gemini 1.5 Pro · 1M ctx",             True),
-    ("llama-3.3-70b",        "llama-3.3-70b-versatile",  "groq",         "Groq · llama3.3 70B · ultra-fast",           True),
-    ("mixtral-8x7b",         "mixtral-8x7b-32768",       "groq",         "Groq · Mixtral 8x7B · fast MoE",             True),
-    ("deepseek-chat",        "deepseek-chat",            "deepseek",     "DeepSeek V3 · top coding",                   True),
-    ("mistral-large",        "mistral-large-latest",     "mistral",      "Mistral Large · European sovereign",         True),
-    ("command-r-plus",       "command-r-plus",           "cohere",       "Cohere Command R+ · RAG specialist",         True),
+    ("kimi-k2.6:cloud",      "kimi-k2.6:cloud",          "ollama-cloud", "Multimodal agentic · coding/task orchestration",   False),
+    ("kimi-k2.5:cloud",      "kimi-k2.5:cloud",          "ollama-cloud", "Multimodal agentic · older version",             False),
+    ("deepseek-v4-flash",    "deepseek-v4-flash:cloud",  "ollama-cloud", "284B MoE (13B active) · fast frontier",          False),
+    ("deepseek-v4-pro",      "deepseek-v4-pro:cloud",    "ollama-cloud", "1M token context · deep reasoning",              False),
+    ("glm-5.1:cloud",        "glm-5.1:cloud",            "ollama-cloud", "GLM flagship · agentic engineering",              False),
+    ("gemma4:cloud",         "gemma4:cloud",             "ollama-cloud", "Frontier-level reasoning · multimodal",           False),
+    ("qwen3.5:cloud",        "qwen3.5:cloud",            "ollama-cloud", "Multimodal models · fast",                       False),
+    ("qwen3-coder-next",     "qwen3-coder-next:cloud",   "ollama-cloud", "Coding-optimized · development workflows",        False),
+    ("gpt-4o",               "gpt-4o",                   "openai",       "OpenAI GPT-4o · top quality",                    True),
+    ("gpt-4o-mini",          "gpt-4o-mini",              "openai",       "OpenAI GPT-4o mini · fast + cheap",             True),
+    ("claude-sonnet-4-6",    "claude-sonnet-4-6",        "anthropic",    "Anthropic Claude Sonnet 4.6",                    True),
+    ("claude-opus-4-7",      "claude-opus-4-7",          "anthropic",    "Anthropic Claude Opus 4.7 · best quality",       True),
+    ("gemini-2.0-flash",     "gemini-2.0-flash",         "google",       "Google Gemini 2.0 Flash · fast",                 True),
+    ("gemini-1.5-pro",       "gemini-1.5-pro",           "google",       "Google Gemini 1.5 Pro · 1M ctx",                 True),
+    ("llama-3.3-70b",        "llama-3.3-70b-versatile",  "groq",         "Groq · llama3.3 70B · ultra-fast",               True),
+    ("mixtral-8x7b",         "mixtral-8x7b-32768",       "groq",         "Groq · Mixtral 8x7B · fast MoE",                 True),
+    ("deepseek-chat",        "deepseek-chat",            "deepseek",     "DeepSeek V3 · top coding",                       True),
+    ("mistral-large",        "mistral-large-latest",     "mistral",      "Mistral Large · European sovereign",             True),
+    ("command-r-plus",       "command-r-plus",           "cohere",       "Cohere Command R+ · RAG specialist",             True),
 ]
 
 def _print_typewriter(text: str, delay: float = 0.002):
@@ -148,8 +153,8 @@ def _ensure_nb_ready():
     print()
 
     mini_options = [
-        ("Local Ollama models", "Install recommended models via Ollama (free, on your GPU)"),
-        ("Cloud model only",    "Use a cloud API — OpenAI, Anthropic, Groq, etc."),
+        ("Local Ollama models", "Install models locally (free, on your GPU)"),
+        ("Cloud models",        "Ollama Cloud or cloud API — requires login + subscription/key"),
         ("Skip setup",          "Launch anyway (may fail without a provider)"),
     ]
     mini_idx = [0]
@@ -286,7 +291,13 @@ def _quick_ollama_setup(config_path: Path):
 
 
 def _quick_cloud_setup(config_path: Path):
-    """Pick a cloud provider, enter API key, write minimal config."""
+    """Pick a cloud provider, enter API key, write minimal config.
+
+    Note: Ollama Cloud models require login at ollama.com + Pro/Max subscription ($20-100/mo).
+    """
+    print(f"\n  {AMBER}Note: Ollama Cloud models require ollama.com account + Pro/Max subscription{RESET}")
+    print(f"  {DIM}Visit https://ollama.com to create account & subscription{RESET}\n")
+
     _PROVIDERS = [
         ("openai",    "OPENAI_KEY",    "https://api.openai.com/v1",      "gpt-4o"),
         ("anthropic", "ANTHROPIC_KEY", "https://api.anthropic.com/v1",   "claude-sonnet-4-6"),
