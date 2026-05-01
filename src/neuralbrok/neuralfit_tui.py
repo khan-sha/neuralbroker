@@ -1,27 +1,31 @@
 """
-NeuralFit Advanced TUI
-─────────────────────
-Full-screen interactive terminal UI powered by the compiled hardware-scoring
-engine. Features: keyboard navigation, live search, sort cycling, detail pane,
-Ollama pull shortcut, and a NeuralBroker Pink-Matrix aesthetic.
+neuralfit_tui.py — NeuralFit Advanced full-screen TUI
+======================================================
+Fetches model data from the compiled hardware-scoring engine (via --json),
+then renders a fully interactive Pink-Matrix terminal UI.
 
-Zero llmfit branding visible to the end user.
+Features:
+  • Keyboard navigation (↑↓ PgUp PgDn Home End)
+  • Tab-cycle sort (score, tok/s, params, vram, context, name)
+  • Live incremental search  (press /)
+  • Detail pane with score breakdown (press Enter)
+  • Background Ollama pull  (press o)
+  • ANSI-aware column alignment — columns never drift
+  • All 900+ models from the engine, no cap by default
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
-import textwrap
-import time
 import threading
-from typing import List, Optional
+import time
+from typing import Optional
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ANSI colour palette (matches NeuralBroker Pink-Matrix theme)
-# ──────────────────────────────────────────────────────────────────────────────
+# ─── colour palette ──────────────────────────────────────────────────────────
 RESET   = "\033[0m"
 BOLD    = "\033[1m"
 DIM     = "\033[2m"
@@ -32,67 +36,89 @@ GREEN   = "\033[92m"
 RED     = "\033[91m"
 AMBER   = "\033[93m"
 MATRIX  = "\033[92m"
-BG_SEL  = "\033[48;5;53m"   # deep purple row highlight
-BG_HDR  = "\033[48;5;16m"   # near-black header bg
 CLEAR   = "\033[2J\033[H"
+# row backgrounds
+BG_SEL  = "\033[48;5;53m"    # deep purple
+BG_HDR  = "\033[48;5;17m"    # dark navy
 
+# ─── ANSI-aware string utilities ─────────────────────────────────────────────
+_ANSI = re.compile(r"\033\[[0-9;]*m")
 
-def _c(text: str, *codes: str) -> str:
-    return "".join(codes) + str(text) + RESET
+def _vlen(s: str) -> int:
+    """Visible length of a string (ANSI codes have zero width)."""
+    return len(_ANSI.sub("", s))
 
+def _pad(s: str, width: int, align: str = "<") -> str:
+    """Pad s to *visible* width, so columns don't drift with colour codes."""
+    vis = _vlen(s)
+    gap = max(0, width - vis)
+    return (s + " " * gap) if align == "<" else (" " * gap + s)
 
 def _trunc(s: str, n: int) -> str:
     s = str(s)
     return s if len(s) <= n else s[: n - 1] + "…"
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Score bar renderer  ████████░░  (Pink=quality, Green=speed, Cyan=fit)
-# ──────────────────────────────────────────────────────────────────────────────
+# ─── score bar (pure ASCII fill) ─────────────────────────────────────────────
 def _bar(pct: float, width: int = 10, color: str = PINK) -> str:
     filled = max(0, min(width, round(pct / 100 * width)))
     return color + "█" * filled + DIM + "░" * (width - filled) + RESET
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Fit-level badge
-# ──────────────────────────────────────────────────────────────────────────────
-FIT_BADGE = {
-    "good":        (_c("✅ optimal  ", MATRIX, BOLD),   "optimal"),
-    "comfortable": (_c("✅ optimal  ", MATRIX, BOLD),   "optimal"),
-    "tight":       (_c("⚠️  tight    ", AMBER, BOLD),    "tight"),
-    "partial":     (_c("⚡ partial  ", RED),             "partial"),
-    "too_large":   (_c("❌ too large", DIM),             "large"),
+# ─── fit-level badge ─────────────────────────────────────────────────────────
+# Maps every value llmfit actually returns → coloured label (fixed visual width=10)
+_FIT = {
+    "perfect":   MATRIX + BOLD + "✅ perfect " + RESET,
+    "good":      MATRIX + BOLD + "✅ good    " + RESET,
+    "too tight": AMBER  + BOLD + "⚠ too tight" + RESET,
+    "tight":     AMBER  + BOLD + "⚠  tight  " + RESET,
+    "marginal":  RED    +        "⚡ marginal " + RESET,
+    "partial":   RED    +        "⚡ partial  " + RESET,
+    "too_large": DIM    +        "✗ too large" + RESET,
 }
 
 def _fit_badge(fit_level: str) -> str:
-    key = fit_level.lower().replace(" ", "_")
-    return FIT_BADGE.get(key, (_c("? unknown ", DIM), "?"))[0]
+    key = fit_level.strip().lower()
+    return _FIT.get(key, DIM + f"{'?' + fit_level[:8]:<10}" + RESET)
 
+# ─── column spec ─────────────────────────────────────────────────────────────
+# (header_label, visible_width, data_key_or_fn, align)
+COLS = [
+    ("#",        4,  None,                 ">"),
+    ("Model",   30,  "name",               "<"),
+    ("Params",   7,  "params_b",           ">"),
+    ("VRAM",     5,  "memory_required_gb", ">"),
+    ("Tok/s",    5,  "estimated_tps",      ">"),
+    ("Ctx",      5,  "context_length",     ">"),
+    ("Score",    5,  "score",              ">"),
+    ("Fit",     12,  "fit_level",          "<"),
+    ("Quality", 10,  "quality_bar",        "<"),
+    ("Use-Case",22,  "use_case",           "<"),
+]
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Main TUI class
-# ──────────────────────────────────────────────────────────────────────────────
+# ─── main TUI class ───────────────────────────────────────────────────────────
 class NeuralFitTUI:
-    SORTS = ["score", "tps", "params", "mem", "ctx", "name"]
-    SORT_LABELS = {
-        "score": "Score↓", "tps": "Tok/s↓", "params": "Params↓",
-        "mem": "VRAM↓", "ctx": "Context↓", "name": "Name A-Z",
+    SORTS      = ["score", "tps", "params", "mem", "ctx", "name"]
+    SORT_LABEL = {
+        "score":  "Score ↓",
+        "tps":    "Tok/s ↓",
+        "params": "Params ↓",
+        "mem":    "VRAM ↓",
+        "ctx":    "Context ↓",
+        "name":   "Name A→Z",
     }
 
-    def __init__(self, models: list, system: dict, limit: int = 40):
-        self.all_models = models[:limit]
-        self.system = system
-        self.cursor = 0
-        self.scroll = 0
-        self.sort_idx = 0
-        self.query = ""
+    def __init__(self, models: list, system: dict):
+        self.all_models  = models
+        self.system      = system
+        self.cursor      = 0
+        self.scroll      = 0
+        self.sort_idx    = 0
+        self.query       = ""
         self.detail_open = False
-        self.pull_status: dict[str, str] = {}   # name -> "pulling"|"done"|"error"
+        self.pull_status: dict[str, str] = {}
         self._filtered: list = []
-        self._apply_sort_filter()
+        self._apply()
 
-    # ── data helpers ──────────────────────────────────────────────────────────
+    # ── data ──────────────────────────────────────────────────────────────────
 
     def _sort_key(self, m: dict):
         s = self.SORTS[self.sort_idx]
@@ -104,181 +130,192 @@ class NeuralFitTUI:
         if s == "name":   return (m.get("name") or "").lower()
         return 0
 
-    def _apply_sort_filter(self):
+    def _apply(self):
         q = self.query.lower()
         self._filtered = [
             m for m in self.all_models
-            if q in (m.get("name") or "").lower()
+            if not q
+            or q in (m.get("name") or "").lower()
             or q in (m.get("use_case") or "").lower()
             or q in (m.get("category") or "").lower()
+            or q in (m.get("fit_level") or "").lower()
         ]
         self._filtered.sort(key=self._sort_key)
-        self.cursor = min(self.cursor, max(0, len(self._filtered) - 1))
+        n = len(self._filtered)
+        self.cursor = max(0, min(self.cursor, n - 1))
 
-    # ── terminal sizing ───────────────────────────────────────────────────────
+    # ── terminal size ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def _size() -> tuple[int, int]:
-        cols, rows = shutil.get_terminal_size((120, 40))
+    def _sz() -> tuple[int, int]:
+        cols, rows = shutil.get_terminal_size((160, 40))
         return cols, rows
 
-    # ── header ────────────────────────────────────────────────────────────────
+    # ── header (5 lines) ─────────────────────────────────────────────────────
 
-    def _render_header(self, cols: int) -> list[str]:
-        sys_gpu   = self.system.get("gpu_name", "Unknown GPU")
-        sys_vram  = self.system.get("gpu_vram_gb", 0)
-        sys_ram   = self.system.get("total_ram_gb", 0)
-        sys_cpu   = self.system.get("cpu_name", "Unknown CPU")
-        backend   = self.system.get("backend", "CPU")
-        n_results = len(self._filtered)
+    def _header(self, cols: int) -> list[str]:
+        sys = self.system
+        gpu   = sys.get("gpu_name", "Unknown GPU")
+        vram  = sys.get("gpu_vram_gb", 0)
+        ram   = sys.get("total_ram_gb", 0)
+        cpu   = _trunc(sys.get("cpu_name", "?"), 38)
+        bknd  = sys.get("backend", "CPU")
+        sort  = self.SORT_LABEL[self.SORTS[self.sort_idx]]
+        n_all = len(self.all_models)
+        n_sh  = len(self._filtered)
+        srch  = (f"  {CYAN}🔍 {self.query}{RESET}" if self.query
+                 else f"  {DIM}[/] search{RESET}")
 
-        sort_label = self.SORT_LABELS[self.SORTS[self.sort_idx]]
-        search_str = f"  🔍 {CYAN}{self.query}{RESET}" if self.query else f"  {DIM}/ to search{RESET}"
-
-        brand = f"{PINK}{BOLD}⌬ NEURALFIT ADVANCED{RESET}"
-        hw    = (
-            f"{CYAN}{BOLD}{sys_gpu}{RESET}"
-            f"  {DIM}{sys_vram:.0f}GB VRAM{RESET}"
-            f"  {DIM}{sys_ram:.0f}GB RAM{RESET}"
-            f"  {DIM}{backend}{RESET}"
-        )
-        controls = (
-            f"{DIM}[↑↓] scroll  [Enter] detail  [o] pull  "
-            f"[Tab] sort:{RESET}{AMBER}{sort_label}{RESET}"
-            f"{DIM}  [q] quit{RESET}"
-        )
-
-        lines = [
+        title = f"{PINK}{BOLD}⌬ NEURALFIT ADVANCED{RESET}"
+        hw    = (f"{CYAN}{BOLD}{gpu}{RESET}"
+                 f"  {DIM}{vram:.0f}GB VRAM{RESET}"
+                 f"  {DIM}{ram:.0f}GB RAM{RESET}"
+                 f"  {DIM}{bknd}{RESET}")
+        ctrl  = (f"{DIM}[↑↓] nav  [PgUp/Dn] page  [Enter] detail  "
+                 f"[o] pull  [Tab] sort:{RESET}{AMBER}{sort}{RESET}"
+                 f"{DIM}  [q] quit{RESET}")
+        return [
             "─" * cols,
-            f"  {brand}   {hw}",
-            f"  {DIM}CPU:{RESET} {_trunc(sys_cpu, 40)}  "
-            f"{DIM}|  {n_results} models matched{RESET}{search_str}",
-            f"  {controls}",
+            f"  {title}   {hw}",
+            f"  {DIM}CPU:{RESET} {cpu}  {DIM}|  {n_sh}/{n_all} models{RESET}{srch}",
+            f"  {ctrl}",
             "─" * cols,
         ]
-        return lines
 
-    # ── column header ─────────────────────────────────────────────────────────
+    # ── column header row ────────────────────────────────────────────────────
 
-    def _render_col_header(self, cols: int) -> str:
-        return (
-            BG_HDR
-            + f"  {'#':>3}  {'Model':<28}  {'Params':>6}  "
-              f"{'VRAM':>5}  {'Tok/s':>5}  {'Ctx':>6}  "
-              f"{'Score':>5}  {'Fit':<11}  {'Quality':<12}  {'Use-Case':<20}"
-            + RESET
-        )
+    def _col_hdr(self) -> str:
+        cells = []
+        for label, width, *_ in COLS:
+            cells.append(_pad(label, width))
+        return BG_HDR + DIM + "  " + "  ".join(cells) + RESET
 
-    # ── single model row ──────────────────────────────────────────────────────
+    # ── single data row ──────────────────────────────────────────────────────
 
-    def _render_row(self, idx: int, m: dict, is_selected: bool, cols: int) -> str:
-        bg   = BG_SEL if is_selected else ""
-        num  = _c(f"{idx+1:>3}", DIM)
+    def _row(self, idx: int, m: dict, selected: bool) -> str:
+        bg   = BG_SEL if selected else ""
         name = m.get("name") or "?"
-        inst = f"{MATRIX}●{RESET}" if m.get("installed") else f"{DIM}○{RESET}"
+        inst = m.get("installed", False)
+        pull = self.pull_status.get(name)
 
-        pull_s = self.pull_status.get(name)
-        if pull_s == "pulling":
-            inst = f"{AMBER}⟳{RESET}"
-        elif pull_s == "done":
-            inst = f"{MATRIX}✓{RESET}"
-        elif pull_s == "error":
-            inst = f"{RED}✗{RESET}"
+        if   pull == "pulling": dot = AMBER  + "⟳" + RESET
+        elif pull == "done":    dot = MATRIX + "✓" + RESET
+        elif pull == "error":   dot = RED    + "✗" + RESET
+        elif inst:              dot = MATRIX + "●" + RESET
+        else:                   dot = DIM    + "○" + RESET
 
-        params  = f"{m.get('params_b', 0):.1f}B"
-        vram    = f"{m.get('memory_required_gb', 0):.1f}"
-        tps     = f"{m.get('estimated_tps', 0):.0f}"
-        ctx     = f"{(m.get('context_length') or 0)//1000}k"
-        score   = m.get("score") or 0
-        sc_col  = MATRIX if score >= 85 else CYAN if score >= 70 else PINK if score >= 50 else DIM
-        score_s = _c(f"{score:.0f}", sc_col, BOLD)
+        sc   = m.get("score_components") or {}
+        qual = sc.get("quality", 0)
 
-        fit_s   = _fit_badge(m.get("fit_level", ""))
-        sc_comp = m.get("score_components") or {}
-        quality = sc_comp.get("quality", 0)
-        q_bar   = _bar(quality, 8, PINK)
-        use     = _trunc(m.get("use_case") or m.get("category") or "", 20)
+        def _cell(col):
+            label, width, key, align = col
+            if label == "#":
+                raw = f"{idx+1}"
+                return _pad(DIM + raw + RESET, width + len(DIM+RESET), align)
+            if label == "Model":
+                short = _trunc(name.split("/")[-1], width - 2)
+                colored = ((PINK + BOLD if selected else CYAN) + short + RESET)
+                return dot + " " + _pad(colored, width - 2 + len((PINK+BOLD if selected else CYAN)+RESET))
+            if label == "Params":
+                v = f"{m.get('params_b', 0):.1f}B"
+                return _pad(DIM + v + RESET, width + len(DIM+RESET), align)
+            if label == "VRAM":
+                v = f"{m.get('memory_required_gb', 0):.1f}"
+                return _pad(PINK + v + RESET, width + len(PINK+RESET), align)
+            if label == "Tok/s":
+                v = f"{m.get('estimated_tps', 0):.0f}"
+                return _pad(DIM + v + RESET, width + len(DIM+RESET), align)
+            if label == "Ctx":
+                ctx = m.get("context_length") or 0
+                v = f"{ctx//1000}k" if ctx >= 1000 else str(ctx)
+                return _pad(DIM + v + RESET, width + len(DIM+RESET), align)
+            if label == "Score":
+                s = m.get("score") or 0
+                c = MATRIX if s >= 85 else CYAN if s >= 70 else PINK if s >= 50 else DIM
+                v = f"{s:.0f}"
+                return _pad(c + BOLD + v + RESET, width + len(c+BOLD+RESET), align)
+            if label == "Fit":
+                badge = _fit_badge(m.get("fit_level") or "")
+                # badge has fixed 10-char visible width + colour codes
+                return badge
+            if label == "Quality":
+                return _bar(qual, width, PINK)
+            if label == "Use-Case":
+                v = _trunc(m.get("use_case") or m.get("category") or "", width)
+                return _pad(DIM + v + RESET, width + len(DIM+RESET), align)
+            return " " * width
 
-        name_display = _trunc(name.split("/")[-1], 26)
-        if is_selected:
-            name_display = _c(name_display, PINK, BOLD)
-        else:
-            name_display = _c(name_display, CYAN)
-
-        row = (
-            bg
-            + f"  {num}  {inst} {name_display:<26}  {_c(params, DIM):>9}  "
-              f"{_c(vram, DIM):>8}  {_c(tps, DIM):>8}  {_c(ctx, DIM):>9}  "
-              f"{score_s:>5}  {fit_s}  {q_bar}  {_c(use, DIM)}"
-            + RESET
-        )
-        return row
+        cells = [_cell(c) for c in COLS]
+        return bg + "  " + "  ".join(cells) + RESET
 
     # ── detail pane ───────────────────────────────────────────────────────────
 
-    def _render_detail(self, m: dict, cols: int) -> list[str]:
-        sc   = m.get("score_components") or {}
-        name = m.get("name", "?")
+    def _detail(self, m: dict, cols: int) -> list[str]:
+        sc    = m.get("score_components") or {}
+        name  = m.get("name", "?")
+        pull  = self.pull_status.get(name, "")
         lines = [
             "═" * cols,
-            f"  {PINK}{BOLD}⌬ MODEL DETAIL{RESET}  {CYAN}{BOLD}{name}{RESET}",
+            f"  {PINK}{BOLD}⌬  MODEL DETAIL{RESET}   {CYAN}{BOLD}{name}{RESET}",
             "─" * cols,
-            f"  {DIM}Provider:{RESET}    {m.get('provider','?')}",
-            f"  {DIM}Parameters:{RESET}  {m.get('parameter_count','?')}   "
-            f"{DIM}Quant:{RESET} {m.get('best_quant','?')}   "
+            f"  {DIM}Provider:{RESET}      {m.get('provider', '?')}",
+            f"  {DIM}Parameters:{RESET}    {m.get('parameter_count', '?')}   "
+            f"{DIM}Quant:{RESET} {m.get('best_quant', '?')}   "
             f"{DIM}MoE:{RESET} {'Yes' if m.get('is_moe') else 'No'}",
-            f"  {DIM}Context:{RESET}     {(m.get('context_length') or 0):,} tokens  "
-            f"({DIM}effective: {m.get('effective_context_length') or 'N/A'}{RESET})",
-            f"  {DIM}VRAM Required:{RESET} {m.get('memory_required_gb',0):.2f} GB   "
-            f"{DIM}Disk:{RESET} {m.get('disk_size_gb',0):.2f} GB   "
-            f"{DIM}Utilization:{RESET} {m.get('utilization_pct',0):.1f}%",
-            f"  {DIM}Throughput:{RESET}  {CYAN}{m.get('estimated_tps',0):.1f} tok/s{RESET}   "
-            f"{DIM}Runtime:{RESET} {m.get('runtime_label','?')}   "
-            f"{DIM}Mode:{RESET} {m.get('run_mode','?')}",
-            f"  {DIM}License:{RESET}     {m.get('license') or 'Unknown'}",
+            f"  {DIM}Context:{RESET}       {(m.get('context_length') or 0):,} tokens  "
+            f"({DIM}effective: {(m.get('effective_context_length') or 'N/A'):,}{RESET})",
+            f"  {DIM}VRAM Required:{RESET} {PINK}{m.get('memory_required_gb', 0):.2f} GB{RESET}   "
+            f"{DIM}Disk:{RESET} {m.get('disk_size_gb', 0):.2f} GB   "
+            f"{DIM}Utilization:{RESET} {m.get('utilization_pct', 0):.1f}%",
+            f"  {DIM}Throughput:{RESET}    {CYAN}{m.get('estimated_tps', 0):.1f} tok/s{RESET}   "
+            f"{DIM}Runtime:{RESET} {m.get('runtime_label', '?')}   "
+            f"{DIM}Mode:{RESET} {m.get('run_mode', '?')}",
+            f"  {DIM}License:{RESET}       {m.get('license') or 'Unknown'}",
+            f"  {DIM}Fit level:{RESET}     {_fit_badge(m.get('fit_level') or '')}",
             "",
-            f"  {BOLD}Score Breakdown:{RESET}",
-            f"  Quality  {_bar(sc.get('quality',0),  14, PINK)}  {sc.get('quality',0):.0f}/100",
-            f"  Speed    {_bar(sc.get('speed',0),    14, GREEN)}  {sc.get('speed',0):.0f}/100",
-            f"  Fit      {_bar(sc.get('fit',0),      14, CYAN)}  {sc.get('fit',0):.0f}/100",
-            f"  Context  {_bar(sc.get('context',0),  14, AMBER)}  {sc.get('context',0):.0f}/100",
-            f"  {DIM}Composite:{RESET}   {PINK}{BOLD}{m.get('score',0):.1f}/100{RESET}",
+            f"  {BOLD}Score Breakdown{RESET}",
+            f"  {DIM}Quality{RESET}   {_bar(sc.get('quality', 0),  16, PINK)}  "
+            f"{PINK}{sc.get('quality', 0):.0f}/100{RESET}",
+            f"  {DIM}Speed  {RESET}   {_bar(sc.get('speed', 0),    16, GREEN)}  "
+            f"{GREEN}{sc.get('speed', 0):.0f}/100{RESET}",
+            f"  {DIM}Fit    {RESET}   {_bar(sc.get('fit', 0),      16, CYAN)}  "
+            f"{CYAN}{sc.get('fit', 0):.0f}/100{RESET}",
+            f"  {DIM}Context{RESET}   {_bar(sc.get('context', 0),  16, AMBER)}  "
+            f"{AMBER}{sc.get('context', 0):.0f}/100{RESET}",
+            f"  {DIM}Composite:{RESET}     {PINK}{BOLD}{m.get('score', 0):.1f} / 100{RESET}",
             "",
         ]
-        caps = m.get("capabilities") or []
+        caps  = m.get("capabilities") or []
+        notes = m.get("notes") or []
+        gguf  = m.get("gguf_sources") or []
         if caps:
             lines.append(f"  {DIM}Capabilities:{RESET}  {', '.join(caps)}")
-        notes = m.get("notes") or []
         for note in notes[:3]:
-            lines.append(f"  {DIM}⚑  {_trunc(note, cols-8)}{RESET}")
-        gguf  = m.get("gguf_sources") or []
+            lines.append(f"  {DIM}⚑  {_trunc(note, cols - 8)}{RESET}")
         if gguf:
-            lines.append(f"  {DIM}GGUF source:{RESET} {gguf[0]}")
-        pull_s = self.pull_status.get(name)
-        if pull_s:
-            status_str = {
-                "pulling": f"{AMBER}Downloading…{RESET}",
-                "done":    f"{MATRIX}Downloaded ✓{RESET}",
-                "error":   f"{RED}Pull failed ✗{RESET}",
-            }.get(pull_s, pull_s)
-            lines.append(f"  {DIM}Pull status:{RESET}  {status_str}")
+            lines.append(f"  {DIM}GGUF source:{RESET}   {gguf[0]}")
+        if pull:
+            ps = {
+                "pulling": AMBER  + "Downloading…" + RESET,
+                "done":    MATRIX + "Downloaded ✓" + RESET,
+                "error":   RED    + "Pull failed ✗" + RESET,
+            }.get(pull, pull)
+            lines.append(f"  {DIM}Pull status:{RESET}   {ps}")
         lines += [
             "",
-            f"  {DIM}[o] Pull with Ollama   [Esc/Enter] close{RESET}",
+            f"  {DIM}[o] Pull with Ollama   [Enter / Esc] close{RESET}",
             "═" * cols,
         ]
         return lines
 
-    # ── pull via ollama ───────────────────────────────────────────────────────
+    # ── Ollama pull ───────────────────────────────────────────────────────────
 
-    def _pull_model(self, name: str):
+    def _pull(self, name: str):
         short = name.split("/")[-1]
         self.pull_status[name] = "pulling"
         try:
-            subprocess.run(
-                ["ollama", "pull", short],
-                check=True, capture_output=True, timeout=600,
-            )
+            subprocess.run(["ollama", "pull", short], check=True,
+                           capture_output=True, timeout=600)
             self.pull_status[name] = "done"
         except Exception:
             self.pull_status[name] = "error"
@@ -286,60 +323,50 @@ class NeuralFitTUI:
     # ── full render ───────────────────────────────────────────────────────────
 
     def _render(self):
-        cols, rows = self._size()
-        buf: list[str] = []
+        cols, rows = self._sz()
+        hdr   = self._header(cols)
+        n_hdr = len(hdr) + 1        # +1 for col-header row
+        list_h = rows - n_hdr - 1   # -1 for footer
 
-        header  = self._render_header(cols)
-        col_hdr = self._render_col_header(cols)
-        n_head  = len(header) + 1           # +1 for col header
-        list_h  = rows - n_head - 2         # -2 for footer
-
-        # Scroll logic
+        # scroll tracking
         if self.cursor >= self.scroll + list_h:
             self.scroll = self.cursor - list_h + 1
         if self.cursor < self.scroll:
             self.scroll = self.cursor
 
-        buf.append(CLEAR)
-        buf.extend(header)
-        buf.append(col_hdr)
+        out = [CLEAR]
+        out.extend(hdr)
+        out.append(self._col_hdr())
 
         visible = self._filtered[self.scroll: self.scroll + list_h]
         for i, m in enumerate(visible):
-            abs_idx = self.scroll + i
-            buf.append(self._render_row(abs_idx, m, abs_idx == self.cursor, cols))
+            abs_i = self.scroll + i
+            out.append(self._row(abs_i, m, abs_i == self.cursor))
 
-        # Pad empty rows
+        # blank padding
         for _ in range(list_h - len(visible)):
-            buf.append("")
+            out.append("")
 
-        # Footer
-        n_total = len(self.all_models)
-        n_shown = len(self._filtered)
-        buf.append(
-            f"  {DIM}NeuralFit Advanced  ·  {n_shown}/{n_total} models  "
-            f"·  row {self.cursor+1}/{n_shown}  ·  "
-            f"sort: {self.SORT_LABELS[self.SORTS[self.sort_idx]]}{RESET}"
+        # footer
+        out.append(
+            f"  {DIM}NeuralFit Advanced  ·  "
+            f"{len(self._filtered)}/{len(self.all_models)} models  ·  "
+            f"row {self.cursor + 1}  ·  "
+            f"sort: {self.SORT_LABEL[self.SORTS[self.sort_idx]]}{RESET}"
         )
 
-        # Detail overlay
+        # detail overlay
         if self.detail_open and self._filtered:
-            m = self._filtered[self.cursor]
-            detail_lines = self._render_detail(m, cols)
-            # Print from bottom up, overlaid
-            start_row = max(0, rows - len(detail_lines) - 1)
-            # Clear and re-render from start_row
-            buf_prefix = buf[:n_head + start_row]
-            overlay = detail_lines
-            buf = buf_prefix + overlay
+            detail_lines = self._detail(self._filtered[self.cursor], cols)
+            # splice in from below the header
+            out = out[:n_hdr] + detail_lines
 
-        sys.stdout.write("\n".join(buf))
+        sys.stdout.write("\n".join(out))
         sys.stdout.flush()
 
-    # ── input (Windows getch + Unix) ─────────────────────────────────────────
+    # ── keyboard ─────────────────────────────────────────────────────────────
 
     def _getch(self) -> str:
-        """Read a single keystroke, returns a symbolic string."""
         if sys.platform == "win32":
             import msvcrt
             ch = msvcrt.getwch()
@@ -347,124 +374,105 @@ class NeuralFitTUI:
                 ch2 = msvcrt.getwch()
                 return {"H": "UP", "P": "DOWN", "G": "HOME", "O": "END",
                         "I": "PGUP", "Q": "PGDN"}.get(ch2, "")
-            if ch == "\r":  return "ENTER"
-            if ch == "\x1b": return "ESC"
-            if ch == "\x03": return "QUIT"
-            if ch == "\t":  return "TAB"
-            return ch
+            return {"\\r": "ENTER", "\r": "ENTER", "\x1b": "ESC",
+                    "\x03": "QUIT", "\t": "TAB",
+                    "\x08": "BS", "\x7f": "BS"}.get(ch, ch)
         else:
             import tty, termios
-            fd = sys.stdin.fileno()
-            old = termios.tcgetattr(fd)
+            fd   = sys.stdin.fileno()
+            old  = termios.tcgetattr(fd)
             try:
                 tty.setraw(fd)
                 ch = sys.stdin.read(1)
                 if ch == "\x1b":
                     rest = sys.stdin.read(2)
-                    return {"[A": "UP", "[B": "DOWN", "[H": "HOME", "[F": "END",
-                            "[5": "PGUP", "[6": "PGDN"}.get(rest, "ESC")
-                if ch == "\r" or ch == "\n": return "ENTER"
-                if ch == "\x03": return "QUIT"
-                if ch == "\t":  return "TAB"
-                return ch
+                    return {"[A": "UP", "[B": "DOWN", "[H": "HOME",
+                            "[F": "END", "[5": "PGUP", "[6": "PGDN"
+                            }.get(rest, "ESC")
+                return {"\r": "ENTER", "\n": "ENTER", "\x03": "QUIT",
+                        "\t": "TAB", "\x08": "BS", "\x7f": "BS"}.get(ch, ch)
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    # ── search ────────────────────────────────────────────────────────────────
+
+    def _search(self):
+        self.query = ""
+        _, rows = self._sz()
+        while True:
+            self._render()
+            sys.stdout.write(
+                f"\033[{rows};0H"
+                f"  {PINK}🔍 Search:{RESET} {self.query}{CYAN}▌{RESET}   "
+            )
+            sys.stdout.flush()
+            key = self._getch()
+            if key in ("ENTER", "ESC", "QUIT"):
+                break
+            elif key == "BS":
+                self.query = self.query[:-1]
+            elif len(key) == 1 and key.isprintable():
+                self.query += key
+            self._apply()
+            self.cursor = 0
 
     # ── main loop ─────────────────────────────────────────────────────────────
 
     def run(self):
-        try:
-            os.system("" if sys.platform != "win32" else "cls")   # init
-            # Enable ANSI on Windows
-            if sys.platform == "win32":
-                os.system("color")
+        if sys.platform == "win32":
+            try:
                 import ctypes
-                kernel32 = ctypes.windll.kernel32
-                kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
-        except Exception:
-            pass
+                ctypes.windll.kernel32.SetConsoleMode(
+                    ctypes.windll.kernel32.GetStdHandle(-11), 7)
+            except Exception:
+                pass
 
         while True:
             self._render()
             key = self._getch()
 
-            if key in ("q", "QUIT"):
-                break
-            elif key == "UP":
-                self.cursor = max(0, self.cursor - 1)
-            elif key == "DOWN":
-                self.cursor = min(len(self._filtered) - 1, self.cursor + 1)
-            elif key == "PGUP":
-                _, rows = self._size()
-                self.cursor = max(0, self.cursor - (rows // 2))
-            elif key == "PGDN":
-                _, rows = self._size()
-                self.cursor = min(len(self._filtered) - 1, self.cursor + (rows // 2))
-            elif key == "HOME":
-                self.cursor = 0
-            elif key == "END":
-                self.cursor = max(0, len(self._filtered) - 1)
+            n = len(self._filtered)
+            _, rows = self._sz()
+            page    = max(1, rows - 7)
+
+            if   key in ("q", "QUIT"):                break
+            elif key == "UP":    self.cursor = max(0, self.cursor - 1)
+            elif key == "DOWN":  self.cursor = min(n - 1, self.cursor + 1)
+            elif key == "PGUP":  self.cursor = max(0, self.cursor - page)
+            elif key == "PGDN":  self.cursor = min(n - 1, self.cursor + page)
+            elif key == "HOME":  self.cursor = 0
+            elif key == "END":   self.cursor = max(0, n - 1)
             elif key == "TAB":
                 self.sort_idx = (self.sort_idx + 1) % len(self.SORTS)
-                self._apply_sort_filter()
+                self._apply()
             elif key == "ENTER":
                 self.detail_open = not self.detail_open
             elif key == "ESC":
-                if self.detail_open:
-                    self.detail_open = False
+                if   self.detail_open: self.detail_open = False
                 elif self.query:
                     self.query = ""
-                    self._apply_sort_filter()
+                    self._apply()
                 else:
                     break
             elif key == "/":
-                self._search_mode()
+                self._search()
             elif key.lower() == "o":
                 if self._filtered:
                     m = self._filtered[self.cursor]
-                    t = threading.Thread(target=self._pull_model, args=(m["name"],), daemon=True)
-                    t.start()
+                    threading.Thread(
+                        target=self._pull, args=(m["name"],), daemon=True
+                    ).start()
 
         sys.stdout.write(CLEAR)
         sys.stdout.flush()
         print(f"\n  {DIM}NeuralFit Advanced closed.{RESET}\n")
 
-    # ── incremental search ────────────────────────────────────────────────────
 
-    def _search_mode(self):
-        """Simple in-place search input at bottom of screen."""
-        _, rows = self._size()
-        self.query = ""
-        while True:
-            self._render()
-            # overwrite last footer line with prompt
-            sys.stdout.write(
-                f"\033[{rows};0H"  # move to last row
-                f"  {PINK}🔍 Search:{RESET} {self.query}{CYAN}▌{RESET}   "
-            )
-            sys.stdout.flush()
+# ─── entry point ─────────────────────────────────────────────────────────────
 
-            key = self._getch()
-            if key in ("ENTER", "ESC"):
-                break
-            elif key == "QUIT":
-                self.query = ""
-                break
-            elif key in ("\x08", "\x7f", "BACKSPACE"):
-                self.query = self.query[:-1]
-            elif len(key) == 1 and key.isprintable():
-                self.query += key
-            self._apply_sort_filter()
-            self.cursor = 0
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Entry point — fetches data and launches TUI
-# ──────────────────────────────────────────────────────────────────────────────
-
-def run_advanced(limit: int = 40, use_case: Optional[str] = None):
-    """Fetch data from the compiled scoring engine and launch the NeuralFit TUI."""
-    # ── loading screen ────────────────────────────────────────────────────────
+def run_advanced(limit: int = 500, use_case: Optional[str] = None):
+    """Fetch all models from the compiled engine and launch the TUI."""
+    # ── splash ─────────────────────────────────────────────────────────────
     sys.stdout.write(CLEAR)
     sys.stdout.flush()
     W = "═" * 58
@@ -472,18 +480,19 @@ def run_advanced(limit: int = 40, use_case: Optional[str] = None):
     print(f"  {DIM}║{RESET}  {DIM}10011110 11100101 10101111 01001001 01010100{RESET}          {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}    {PINK}{BOLD}NEURALFIT ADVANCED{RESET}  {DIM}hardware intelligence engine{RESET}      {DIM}║{RESET}")
-    print(f"  {DIM}║{RESET}    {DIM}Scanning hardware · scoring models · loading TUI{RESET}     {DIM}║{RESET}")
+    print(f"  {DIM}║{RESET}    {DIM}Scanning · scoring · loading model catalogue…{RESET}        {DIM}║{RESET}")
     print(f"  {DIM}║{RESET}                                                            {DIM}║{RESET}")
     print(f"  {DIM}╚{W}╝{RESET}\n")
 
-    spinners = ["◐", "◓", "◑", "◒"]
+    # ── fetch ──────────────────────────────────────────────────────────────
     result_box: dict = {}
-    err_box: dict = {}
+    err_box:    dict = {}
+    spinners = ["◐", "◓", "◑", "◒"]
 
     def _fetch():
         try:
-            cmd = ["llmfit", "fit", "--json", "--no-dashboard", "-n", str(limit)]
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            cmd = ["llmfit", "fit", "--json", "--no-dashboard"]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             result_box["data"] = json.loads(r.stdout)
         except Exception as e:
             err_box["err"] = str(e)
@@ -493,17 +502,22 @@ def run_advanced(limit: int = 40, use_case: Optional[str] = None):
     idx = 0
     while t.is_alive():
         sys.stdout.write(
-            f"\r  {PINK}{spinners[idx % 4]}{RESET}  {DIM}Running hardware scan & model scoring…{RESET}   "
+            f"\r  {PINK}{spinners[idx % 4]}{RESET}  "
+            f"{DIM}Running hardware scan & scoring entire model catalogue…{RESET}   "
         )
         sys.stdout.flush()
         time.sleep(0.1)
         idx += 1
-    sys.stdout.write(f"\r  {MATRIX}✓{RESET}  {DIM}Scan complete.{RESET}                                   \n\n")
+
+    sys.stdout.write(
+        f"\r  {MATRIX}✓{RESET}  {DIM}Scan complete.{RESET}"
+        f"                                              \n\n"
+    )
     sys.stdout.flush()
 
     if err_box:
         print(f"  {RED}Error: {err_box['err']}{RESET}")
-        print(f"  {DIM}Make sure the hardware scoring engine is installed.{RESET}")
+        print(f"  {DIM}Make sure the scoring engine is installed.{RESET}")
         return
 
     data    = result_box.get("data", {})
@@ -514,6 +528,5 @@ def run_advanced(limit: int = 40, use_case: Optional[str] = None):
         print(f"  {RED}No model data returned.{RESET}")
         return
 
-    time.sleep(0.4)
-    tui = NeuralFitTUI(models, system, limit=limit)
-    tui.run()
+    time.sleep(0.3)
+    NeuralFitTUI(models, system).run()
