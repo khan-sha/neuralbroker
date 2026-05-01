@@ -1,8 +1,9 @@
 """
-FastAPI application — NeuralBroker.
+FastAPI application — NeuralBroker v2.0.
 
 VRAM-aware LLM routing proxy with OpenAI-compatible endpoints,
-internal observability APIs, and Prometheus metrics.
+Swarm agent orchestration, llmfit hardware-aware model scoring,
+MCP server, and Prometheus metrics.
 """
 import json
 import logging
@@ -113,6 +114,24 @@ poller: Optional[VramPoller] = None
 
 # Legacy backend dict for backward compat with old adapter.py
 backends: dict = {}
+
+# v2.0: Agent orchestration globals (lazy-initialized)
+_agent_router = None
+_swarm_coordinator = None
+
+def _get_agent_router():
+    global _agent_router
+    if _agent_router is None:
+        from neuralbrok.orchestrator import AgentRouter
+        _agent_router = AgentRouter()
+    return _agent_router
+
+def _get_swarm_coordinator():
+    global _swarm_coordinator
+    if _swarm_coordinator is None:
+        from neuralbrok.orchestrator import SwarmCoordinator
+        _swarm_coordinator = SwarmCoordinator(_get_agent_router())
+    return _swarm_coordinator
 
 
 def _register_discovered(prov_name: str, auth: DiscoveredAuth) -> None:
@@ -416,6 +435,13 @@ async def chat_completions(request: Request):
             media_type="application/json",
         )
 
+    # Fix model inheritance: strip NeuralBroker:backend: prefix
+    model_str = body.get("model", "")
+    if isinstance(model_str, str) and model_str.startswith("NeuralBroker:"):
+        parts = model_str.split(":", 2)
+        if len(parts) >= 3:
+            body["model"] = parts[2]
+
     stream = body.get("stream", False)
 
     # Get current VRAM snapshot (cached, <1ms)
@@ -476,7 +502,8 @@ async def chat_completions(request: Request):
                                 try:
                                     raw = chunk[5:].strip()
                                     parsed = json.loads(raw)
-                                    parsed["model"] = f"NeuralBroker:{bname}"
+                                    orig_model = parsed.get("model", body.get("model", ""))
+                                    parsed["model"] = f"NeuralBroker:{bname}:{orig_model}"
                                     chunk = f"data: {json.dumps(parsed)}\n\n"
                                 except Exception as e:
                                     logger.debug(f"Streaming model injection failed: {e}")
@@ -579,10 +606,10 @@ async def chat_completions(request: Request):
                 # Inject routed backend name into model field
                 try:
                     resp_json = json.loads(result_text)
-                    original_model = resp_json.get("model", "")
-                    resp_json["model"] = f"NeuralBroker:{backend_name}"
+                    original_model = resp_json.get("model", body.get("model", ""))
+                    resp_json["model"] = f"NeuralBroker:{backend_name}:{original_model}"
                     result_text = json.dumps(resp_json)
-                    logger.debug(f"Model injection: {original_model} → NeuralBroker:{backend_name}")
+                    logger.debug(f"Model injection: {original_model} → {resp_json['model']}")
                 except Exception as e:
                     logger.warning(f"Model injection failed: {e}")
                     pass  # Keep original if parsing fails
@@ -645,6 +672,14 @@ async def anthropic_messages(request: Request):
             status_code=400,
             media_type="application/json",
         )
+
+    # Fix model inheritance: strip NeuralBroker:backend: prefix
+    model_str = body.get("model", "claude-sonnet-4-6")
+    if isinstance(model_str, str) and model_str.startswith("NeuralBroker:"):
+        parts = model_str.split(":", 2)
+        if len(parts) >= 3:
+            model_str = parts[2]
+            body["model"] = model_str
 
     # ── Translate Anthropic → OpenAI ─────────────────────────────────────────
     openai_msgs = []
@@ -723,7 +758,7 @@ async def anthropic_messages(request: Request):
                 # Stream SSE in Anthropic format
                 async def _anthropic_stream(prov=provider, bname=backend_name, req_body=oai_body):
                     msg_id = f"msg_{int(time.time())}"
-                    model_name = f"NeuralBroker:{bname}"
+                    model_name = f"NeuralBroker:{bname}:{req_body.get('model', '')}"
                     yield f"data: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'content': [], 'model': model_name, 'stop_reason': None, 'stop_sequence': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
                     yield f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
                     try:
@@ -788,7 +823,7 @@ async def anthropic_messages(request: Request):
                         "type": "message",
                         "role": "assistant",
                         "content": [{"type": "text", "text": content_text}],
-                        "model": f"NeuralBroker:{backend_name}",
+                        "model": f"NeuralBroker:{backend_name}:{oai_body.get('model', '')}",
                         "stop_reason": "end_turn",
                         "stop_sequence": None,
                         "usage": {
@@ -958,6 +993,160 @@ async def nb_set_mode(body: dict):
     except (ValueError, KeyError) as e:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
+
+
+# ── v2.0: Agent Orchestration Endpoints ──────────────────────────────────────
+
+@app.get("/nb/agents")
+async def nb_agents():
+    """List available agents (built-in + custom)."""
+    from neuralbrok.agents import list_agents as _list_agents
+    return {"agents": [
+        {"slug": a.slug, "name": a.name, "role": a.role, "icon": a.icon,
+         "color": a.color, "capabilities": a.capabilities,
+         "preferred_use_case": a.preferred_use_case}
+        for a in _list_agents()
+    ]}
+
+
+@app.post("/nb/agents/route")
+async def nb_agent_route(body: dict):
+    """Classify a task and return the recommended agent + model."""
+    from neuralbrok.orchestrator import agent_decision_to_dict
+    task = body.get("task", body.get("message", ""))
+    if not task:
+        raise HTTPException(status_code=400, detail="Missing 'task' field")
+    decision = await _get_agent_router().route(task, use_llm=body.get("use_llm", False))
+    return agent_decision_to_dict(decision)
+
+
+@app.post("/nb/agents/run")
+async def nb_agent_run(body: dict):
+    """Execute a task through a specific or auto-selected agent."""
+    from neuralbrok.agents import get_agent
+    task = body.get("task", body.get("message", ""))
+    if not task:
+        raise HTTPException(status_code=400, detail="Missing 'task' field")
+
+    agent_slug = body.get("agent")
+    if agent_slug:
+        agent = get_agent(agent_slug)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_slug}' not found")
+    else:
+        decision = await _get_agent_router().route(task)
+        agent = decision.agent
+
+    # Build request with agent's system prompt and execute through proxy
+    proxy_body = {
+        "model": body.get("model", "auto"),
+        "messages": [
+            {"role": "system", "content": agent.system_prompt},
+            {"role": "user", "content": task},
+        ],
+        "temperature": body.get("temperature", agent.temperature),
+        "max_tokens": body.get("max_tokens", agent.max_tokens),
+        "stream": False,
+    }
+    # Reuse the existing chat_completions handler logic
+    from starlette.testclient import TestClient
+    # For simplicity, call Ollama directly
+    import httpx
+    try:
+        model = _get_agent_router()._pick_model(agent)
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post("http://localhost:11434/api/chat", json={
+                "model": model,
+                "messages": proxy_body["messages"],
+                "stream": False,
+            })
+            if resp.status_code == 200:
+                content = resp.json()["message"]["content"]
+                return {"agent": agent.slug, "model": model, "content": content}
+            return {"error": f"Model returned {resp.status_code}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/nb/swarm/create")
+async def nb_swarm_create(body: dict):
+    """Create and execute a multi-agent swarm."""
+    from neuralbrok.orchestrator import swarm_to_dict
+    objective = body.get("objective", "")
+    if not objective:
+        raise HTTPException(status_code=400, detail="Missing 'objective' field")
+
+    coord = _get_swarm_coordinator()
+    swarm = coord.create_swarm(objective)
+    await coord.decompose(swarm)
+
+    # Start execution in background
+    import asyncio
+    asyncio.create_task(coord.execute_swarm(swarm))
+
+    return swarm_to_dict(swarm)
+
+
+@app.get("/nb/swarm/{swarm_id}")
+async def nb_swarm_status(swarm_id: str):
+    """Check swarm execution status."""
+    from neuralbrok.orchestrator import swarm_to_dict
+    coord = _get_swarm_coordinator()
+    swarm = coord.get_swarm(swarm_id)
+    if not swarm:
+        raise HTTPException(status_code=404, detail=f"Swarm '{swarm_id}' not found")
+    return swarm_to_dict(swarm)
+
+
+@app.get("/nb/fit")
+async def nb_fit(use_case: str = "general", max_results: int = 15):
+    """LLMFit-style model scoring — rank models by quality/speed/fit/context."""
+    from neuralbrok.llmfit_scorer import rank_models, detect_system_specs, model_fit_to_dict
+    hw = detect_system_specs()
+    fits = rank_models(hw, use_case=use_case, max_results=max_results)
+    return {
+        "hardware": {
+            "gpu": hw.gpu_name, "vram_gb": hw.vram_gb,
+            "bandwidth_gbps": hw.bandwidth_gbps, "ram_gb": hw.ram_gb,
+            "runtimes": {"ollama": hw.ollama_available, "llama_cpp": hw.llamacpp_available,
+                         "lm_studio": hw.lmstudio_available, "docker": hw.docker_model_runner},
+        },
+        "use_case": use_case,
+        "models": [model_fit_to_dict(f) for f in fits],
+    }
+
+
+@app.get("/nb/hardware")
+async def nb_hardware():
+    """Detected hardware profile — GPU, VRAM, bandwidth, runtimes."""
+    from neuralbrok.detect import detect_device
+    profile = detect_device()
+    return {
+        "model": profile.gpu_model,
+        "vendor": profile.gpu_vendor,
+        "vram_gb": round(profile.vram_gb, 1),
+        "ram_gb": round(profile.ram_gb, 1),
+        "cpu_cores": profile.cpu_cores,
+        "bandwidth_gbps": profile.bandwidth_gbps,
+        "platform": profile.platform,
+    }
+
+
+@app.get("/nb/providers/detect")
+async def nb_detect_providers():
+    """Auto-detect available local runtimes and cloud providers."""
+    from neuralbrok.provider_manager import auto_detect_providers
+    detected = auto_detect_providers()
+    return {"providers": detected}
+
+
+@app.post("/nb/federation/receive")
+async def nb_federation_receive(payload: dict):
+    """Zero-trust Federation endpoint to receive cross-node tasks."""
+    from neuralbrok.federation.router import FederationRouter
+    # In a real app we'd persist the router instance globally
+    router = FederationRouter()
+    return router.process_inbound(payload)
 
 
 # ── Observability ─────────────────────────────────────────────────────────────
@@ -1335,8 +1524,21 @@ async def onboarding_page():
 
 @app.get("/dashboard")
 async def dashboard_page():
-    """Serve the local-first dashboard (embedded)."""
+    """Serve the local-first dashboard.
+    
+    Tries to serve from the static dashboard/ directory first,
+    falls back to embedded HTML for backward compatibility.
+    """
+    dashboard_dir = Path(__file__).parent / "dashboard"
+    if (dashboard_dir / "index.html").exists():
+        return FileResponse(dashboard_dir / "index.html")
     return HTMLResponse(content=DASHBOARD_HTML)
+
+# Mount static dashboard files if directory exists
+_dashboard_dir = Path(__file__).parent / "dashboard"
+if _dashboard_dir.exists():
+    from starlette.staticfiles import StaticFiles
+    app.mount("/dashboard-assets", StaticFiles(directory=str(_dashboard_dir)), name="dashboard-assets")
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────

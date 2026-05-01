@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>NeuralBroker — Agent Orchestration Dashboard</title>
+<meta name="description" content="NeuralBroker v2.0 — Hardware-aware LLM routing, agent orchestration, and swarm intelligence dashboard."/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/dashboard-assets/index.css">
+</head>
+<body>
+
+<div class="app">
+  <!-- ══ Header ══════════════════════════════════════════════════════════ -->
+  <div class="header">
+    <div class="logo"><span class="logo-dot">●</span> neuralbroker</div>
+    <span class="version">v2.0</span>
+    <span class="mode-badge" id="mode-badge">cost-mode</span>
+    <div class="mode-switcher">
+      <button class="mode-btn active" data-mode="cost">cost</button>
+      <button class="mode-btn" data-mode="speed">speed</button>
+      <button class="mode-btn" data-mode="fallback">fallback</button>
+      <button class="mode-btn" data-mode="smart">smart</button>
+    </div>
+    <div class="header-status">
+      <span class="led"></span>
+      <span>live</span>
+    </div>
+  </div>
+
+  <!-- ══ Sidebar ═════════════════════════════════════════════════════════ -->
+  <div class="sidebar">
+    <div class="nav-group">
+      <div class="nav-label">Dashboard</div>
+      <a class="nav-item active" data-view="overview">
+        <span class="nav-icon">⚡</span> Overview
+      </a>
+      <a class="nav-item" data-view="agents">
+        <span class="nav-icon">🤖</span> Agents
+      </a>
+      <a class="nav-item" data-view="models">
+        <span class="nav-icon">🧠</span> Models
+      </a>
+      <a class="nav-item" data-view="routing">
+        <span class="nav-icon">🔀</span> Routing
+      </a>
+      <a class="nav-item" data-view="providers">
+        <span class="nav-icon">☁️</span> Providers
+      </a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-label">Active Providers</div>
+      <div id="providers-sidebar"></div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="hw-badge-sidebar" id="hw-sidebar">
+        <span class="hw-dot"></span> Detecting hardware…
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Main Content ════════════════════════════════════════════════════ -->
+  <div class="main">
+
+    <!-- ── Overview View ──────────────────────────────────────────────── -->
+    <div class="view active" id="view-overview">
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Total Requests</div>
+          <div class="stat-value" id="stat-total">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Local %</div>
+          <div class="stat-value accent" id="stat-local">0%</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Cost Saved</div>
+          <div class="stat-value ok" id="stat-saved">$0.00</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Cloud Cost</div>
+          <div class="stat-value cool" id="stat-cloud">$0.00</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:200px 1fr;gap:16px;">
+        <!-- VRAM Gauge -->
+        <div class="card">
+          <div class="card-title">VRAM</div>
+          <div class="gauge-container">
+            <svg class="gauge-svg" viewBox="0 0 160 160">
+              <circle class="gauge-ring gauge-bg" cx="80" cy="80" r="70" transform="rotate(-90 80 80)"
+                stroke-dasharray="439.82"/>
+              <circle class="gauge-ring gauge-fg" id="gauge-arc" cx="80" cy="80" r="70"
+                transform="rotate(-90 80 80)" stroke-dasharray="439.82" stroke-dashoffset="439.82"
+                stroke="var(--accent)"/>
+              <text class="gauge-pct" id="gauge-pct" x="80" y="80" text-anchor="middle"
+                dominant-baseline="central">0%</text>
+              <text class="gauge-sub" x="80" y="105" text-anchor="middle">VRAM</text>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Routing Feed -->
+        <div class="card" style="max-height:400px;overflow-y:auto;">
+          <div class="card-title">Routing Feed — last 25</div>
+          <div class="feed-list" id="routing-feed">
+            <div class="empty-state">Waiting for routing decisions…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Agents View ────────────────────────────────────────────────── -->
+    <div class="view" id="view-agents">
+      <h2 style="font-size:16px;font-weight:500;margin-bottom:16px;">
+        🤖 Agent Orchestration
+        <span class="text-muted" style="font-size:12px;margin-left:8px;">Native swarm routing</span>
+      </h2>
+      <div class="card-grid" id="agents-grid">
+        <div class="empty-state">Loading agents…</div>
+      </div>
+    </div>
+
+    <!-- ── Models View (LLMFit) ───────────────────────────────────────── -->
+    <div class="view" id="view-models">
+      <h2 style="font-size:16px;font-weight:500;margin-bottom:8px;">
+        🧠 Model Scoring
+        <span class="text-muted" style="font-size:12px;margin-left:8px;">llmfit-style hardware-aware ranking</span>
+      </h2>
+      <div id="fit-hardware" class="mb-md"></div>
+      <div class="card" style="overflow-x:auto;">
+        <table class="model-table">
+          <thead>
+            <tr>
+              <th>Model</th><th>Params</th><th>Quant</th><th>Fit</th>
+              <th>Quality</th><th>Speed</th><th>Fit Score</th><th>Context</th>
+              <th>Composite</th><th>Est. Speed</th><th>VRAM</th><th>Installed</th>
+            </tr>
+          </thead>
+          <tbody id="fit-tbody">
+            <tr><td colspan="12" class="empty-state">Loading model scores…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Routing View ───────────────────────────────────────────────── -->
+    <div class="view" id="view-routing">
+      <h2 style="font-size:16px;font-weight:500;margin-bottom:16px;">🔀 Routing Log</h2>
+      <div class="card" style="max-height:calc(100vh - 140px);overflow-y:auto;">
+        <div class="feed-list" id="routing-feed-full">
+          <div class="empty-state">Waiting for routing decisions…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Providers View ─────────────────────────────────────────────── -->
+    <div class="view" id="view-providers">
+      <h2 style="font-size:16px;font-weight:500;margin-bottom:16px;">
+        ☁️ Providers
+        <span class="text-muted" style="font-size:12px;margin-left:8px;">Auto-detected runtimes & cloud APIs</span>
+      </h2>
+      <div class="card-grid" id="detected-providers">
+        <div class="empty-state">Scanning providers…</div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script src="/dashboard-assets/app.js"></script>
+</body>
+</html>

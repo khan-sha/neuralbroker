@@ -2347,6 +2347,202 @@ def list_cmd(url, show_all):
             print(f"  {DIM}  … and {len(live)-20} more (https://ollama.com/library){RESET}")
         print()
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# v2.0 CLI Commands — Agent Orchestration + LLMFit + MCP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@main.command(name="fit")
+@click.option("--use-case", "-u", default="general", help="Use case: coding, reasoning, chat, math, vision, tools, agentic")
+@click.option("--top", "-n", default=12, help="Number of models to show")
+@click.option("--json-out", is_flag=True, help="Output as JSON")
+def fit_cmd(use_case, top, json_out):
+    """Run llmfit-style hardware scan and rank models by composite score."""
+    from neuralbrok.llmfit_scorer import rank_models, detect_system_specs, model_fit_to_dict
+
+    if not json_out:
+        sys.stdout.write(f"  {PINK}◐{RESET}  Scanning hardware...\r")
+        sys.stdout.flush()
+
+    hw = detect_system_specs()
+    fits = rank_models(hw, use_case=use_case, max_results=top, include_too_large=True)
+
+    if json_out:
+        result = {"hardware": {"gpu": hw.gpu_name, "vram_gb": hw.vram_gb, "bandwidth_gbps": hw.bandwidth_gbps},
+                  "models": [model_fit_to_dict(f) for f in fits]}
+        print(json.dumps(result, indent=2))
+        return
+
+    # Pink Matrix styled output
+    print(f"\n  {MAGENTA}{BOLD}▸ LLMFIT — MODEL SCORING{RESET}  {DIM}use_case={use_case}{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    print(f"  {DIM}GPU:{RESET}       {PINK}{hw.gpu_name}{RESET}")
+    print(f"  {DIM}VRAM:{RESET}      {PINK}{hw.vram_gb:.1f} GB{RESET}")
+    print(f"  {DIM}Bandwidth:{RESET} {PINK}{hw.bandwidth_gbps:.0f} GB/s{RESET}")
+    print(f"  {DIM}RAM:{RESET}       {PINK}{hw.ram_gb:.0f} GB{RESET}")
+
+    runtimes = []
+    if hw.ollama_available: runtimes.append(f"{MATRIX}Ollama{RESET}")
+    if hw.llamacpp_available: runtimes.append(f"{MATRIX}llama.cpp{RESET}")
+    if hw.lmstudio_available: runtimes.append(f"{MATRIX}LM Studio{RESET}")
+    if hw.docker_model_runner: runtimes.append(f"{MATRIX}Docker{RESET}")
+    if runtimes:
+        print(f"  {DIM}Runtimes:{RESET}  {' · '.join(runtimes)}")
+    print(f"  {DIM}{'─' * 54}{RESET}\n")
+
+    # Header
+    print(f"  {DIM}{'Model':<24} {'Params':>6} {'Quant':>7} {'Fit':>11} {'Quality':>10} {'Speed':>10} {'Score':>7} {'t/s':>6} {'VRAM':>6}{RESET}")
+    print(f"  {DIM}{'─'*24} {'─'*6} {'─'*7} {'─'*11} {'─'*10} {'─'*10} {'─'*7} {'─'*6} {'─'*6}{RESET}")
+
+    for f in fits:
+        sc = f.scores
+        # Fit badge color
+        if f.fit_level.value == "comfortable":
+            fit_c, fit_l = MATRIX, "✓ comfort"
+        elif f.fit_level.value == "tight":
+            fit_c, fit_l = PINK, "~ tight  "
+        elif f.fit_level.value == "partial":
+            fit_c, fit_l = RED, "⚡ partial"
+        else:
+            fit_c, fit_l = DIM, "✗ too big "
+
+        installed = f"{MATRIX}●{RESET}" if f.is_installed else f"{DIM}○{RESET}"
+        quality_bar = _compat_bar(sc.quality, width=6)
+        speed_bar = _compat_bar(sc.speed, width=6)
+        comp_color = MATRIX if sc.composite > 50 else PINK if sc.composite > 25 else DIM
+
+        print(
+            f"  {installed} {CYAN}{f.name:<22}{RESET}"
+            f"  {DIM}{f.params_b:>5.1f}B{RESET}"
+            f"  {DIM}{f.best_quant:>7}{RESET}"
+            f"  {fit_c}{fit_l}{RESET}"
+            f"  {quality_bar}"
+            f"  {speed_bar}"
+            f"  {comp_color}{sc.composite:>6.1f}{RESET}"
+            f"  {DIM}{f.estimated_tok_s:>5.0f}{RESET}"
+            f"  {DIM}{f.vram_needed_gb:>5.1f}{RESET}"
+        )
+        time.sleep(0.02)
+
+    print(f"\n  {DIM}{'─' * 54}{RESET}")
+    print(f"  {DIM}Scored {len(fits)} models · composite = quality×{PINK}0.35{RESET} + speed×{MATRIX}0.25{RESET} + fit×{CYAN}0.25{RESET} + ctx×{DIM}0.15{RESET}")
+    print()
+
+
+@main.command(name="mcp")
+def mcp_cmd():
+    """Start the MCP server (stdio mode for Claude Code / Cursor)."""
+    from neuralbrok.mcp_server import main as mcp_main
+    mcp_main()
+
+
+@main.command(name="agents")
+@click.argument("action", default="list")
+@click.argument("task", default="", required=False)
+def agents_cmd(action, task):
+    """Manage NeuralBroker agents. Actions: list, route <task>"""
+    from neuralbrok.agents import list_agents as _list_agents, get_agent
+
+    if action == "list":
+        agents = _list_agents()
+        print(f"\n  {MAGENTA}{BOLD}▸ AGENTS{RESET}  {DIM}{len(agents)} available{RESET}")
+        print(f"  {DIM}{'─' * 54}{RESET}")
+        for a in agents:
+            caps = ", ".join(a.capabilities[:4])
+            print(f"  {a.icon}  {PINK}{a.name:<20}{RESET}  {DIM}{a.role}{RESET}")
+            print(f"     {DIM}caps: {caps} · use_case: {a.preferred_use_case}{RESET}")
+        print()
+
+    elif action == "route" and task:
+        from neuralbrok.orchestrator import AgentRouter
+        router = AgentRouter()
+        decision = router.route_fast(task)
+        print(f"\n  {MAGENTA}{BOLD}▸ AGENT ROUTING{RESET}")
+        print(f"  {DIM}{'─' * 54}{RESET}")
+        print(f"  {DIM}Task:{RESET}    {task[:60]}")
+        print(f"  {DIM}Agent:{RESET}   {decision.agent.icon}  {PINK}{decision.agent.name}{RESET}")
+        print(f"  {DIM}Model:{RESET}   {CYAN}{decision.recommended_model}{RESET}")
+        print(f"  {DIM}Method:{RESET}  {decision.classification_method} ({decision.classification_ms:.1f}ms)")
+        print(f"  {DIM}Reason:{RESET}  {decision.reason}")
+        print()
+
+    else:
+        print(f"  {DIM}Usage: neuralbrok agents [list|route <task>]{RESET}")
+
+
+@main.command(name="providers")
+@click.argument("action", default="list")
+def providers_cmd(action):
+    """Manage providers. Actions: list, detect"""
+    from neuralbrok.provider_manager import auto_detect_providers
+
+    if action in ("list", "detect"):
+        detected = auto_detect_providers()
+        local = {k: v for k, v in detected.items() if v["type"] == "local"}
+        cloud = {k: v for k, v in detected.items() if v["type"] == "cloud"}
+
+        print(f"\n  {MAGENTA}{BOLD}▸ PROVIDERS{RESET}  {DIM}auto-detected{RESET}")
+        print(f"  {DIM}{'─' * 54}{RESET}")
+
+        print(f"  {PINK}Local Runtimes{RESET}")
+        for name, info in local.items():
+            status = f"{MATRIX}● online{RESET}" if info["available"] else f"{DIM}○ not found{RESET}"
+            print(f"    {status}  {CYAN}{name:<20}{RESET}  {DIM}{info['url']}{RESET}")
+
+        print(f"\n  {PINK}Cloud Providers{RESET}")
+        for name, info in cloud.items():
+            if info.get("has_key"):
+                status = f"{MATRIX}● configured{RESET}"
+            elif info["available"]:
+                status = f"{PINK}○ key found{RESET}"
+            else:
+                status = f"{DIM}○ not configured{RESET}"
+            cost = f"${info.get('cost_per_1k', 0):.5f}/1k" if info.get('cost_per_1k') else ""
+            print(f"    {status}  {CYAN}{name:<16}{RESET}  {DIM}{cost}{RESET}")
+        print()
+    else:
+        print(f"  {DIM}Usage: neuralbrok providers [list|detect]{RESET}")
+
+
+@main.command(name="plugins")
+@click.argument("action", default="list")
+@click.argument("url", required=False)
+def plugins_cmd(action, url):
+    """Manage dynamic agent plugins. Actions: list, install <url>"""
+    from neuralbrok.agents.loader import PluginLoader
+    loader = PluginLoader()
+    
+    if action == "list":
+        loader.load_all()
+        print(f"\n  {MAGENTA}{BOLD}▸ PLUGINS{RESET}  {DIM}custom agents{RESET}")
+        print(f"  {DIM}{'─' * 54}{RESET}")
+        for slug, agent in loader.custom_agents.items():
+            print(f"    {PINK}●{RESET}  {CYAN}{agent.name:<20}{RESET}  {DIM}{agent.role}{RESET}")
+        if not loader.custom_agents:
+            print(f"  {DIM}  No plugins installed.{RESET}")
+        print()
+    elif action == "install" and url:
+        loader.install_plugin(url)
+    else:
+        print(f"  {DIM}Usage: neuralbrok plugins [list|install <url>]{RESET}")
+
+
+@main.command(name="federation")
+@click.argument("action", default="status")
+def federation_cmd(action):
+    """Zero-trust Federation. Actions: init, status"""
+    from neuralbrok.federation.crypto import FederationCrypto
+    
+    if action == "init":
+        crypto = FederationCrypto()
+        print(f"\n  {MATRIX}{BOLD}▸ FEDERATION INITIALIZED{RESET}")
+        print(f"  {DIM}Node ID:{RESET} {crypto.node_id}")
+        print(f"  {DIM}Ready to accept secure cross-node tasks.{RESET}\n")
+    elif action == "status":
+        print(f"\n  {MAGENTA}{BOLD}▸ FEDERATION STATUS{RESET}")
+        print(f"  {DIM}Waiting for connections...{RESET}\n")
+    else:
+        print(f"  {DIM}Usage: neuralbrok federation [init|status]{RESET}")
+
 
 def _cli_entry():
     if sys.platform == "win32":

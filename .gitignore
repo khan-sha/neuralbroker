@@ -28,3 +28,6 @@ config.yaml
 # Development scratch files
 scratch/
 .PRIVATE_ROADMAP.md
+test_model_inheritance.py
+test_smart_routing.py
+graphify-out/
