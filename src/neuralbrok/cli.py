@@ -2382,13 +2382,15 @@ def fit_cmd(mode, use_case, top, json_out):
         print(json.dumps(result, indent=2))
         return
 
-    # Pink Matrix styled output
-    print(f"\n  {MAGENTA}{BOLD}▸ NEURALFIT — MODEL SCORING{RESET}  {DIM}use_case={use_case}{RESET}")
-    print(f"  {DIM}{'─' * 54}{RESET}")
-    print(f"  {DIM}GPU:{RESET}       {PINK}{hw.gpu_name}{RESET}")
-    print(f"  {DIM}VRAM:{RESET}      {PINK}{hw.vram_gb:.1f} GB{RESET}")
-    print(f"  {DIM}Bandwidth:{RESET} {PINK}{hw.bandwidth_gbps:.0f} GB/s{RESET}")
-    print(f"  {DIM}RAM:{RESET}       {PINK}{hw.ram_gb:.0f} GB{RESET}")
+    # Redesigned UI
+    print(f"\n  {MAGENTA}{BOLD}✨ NEURALFIT HARDWARE INTELLIGENCE ✨{RESET}")
+    print(f"  {DIM}{'═' * 50}{RESET}")
+    
+    # Hardware Profile
+    print(f"  {CYAN}🖥️  Hardware Profile{RESET}")
+    print(f"  {DIM}GPU:{RESET}       {BOLD}{hw.gpu_name}{RESET} {PINK}({hw.vram_gb:.1f} GB VRAM){RESET}")
+    print(f"  {DIM}Bandwidth:{RESET} {hw.bandwidth_gbps:.0f} GB/s")
+    print(f"  {DIM}System RAM:{RESET} {hw.ram_gb:.0f} GB")
 
     runtimes = []
     if hw.ollama_available: runtimes.append(f"{MATRIX}Ollama{RESET}")
@@ -2396,41 +2398,41 @@ def fit_cmd(mode, use_case, top, json_out):
     if hw.lmstudio_available: runtimes.append(f"{MATRIX}LM Studio{RESET}")
     if hw.docker_model_runner: runtimes.append(f"{MATRIX}Docker{RESET}")
     if runtimes:
-        print(f"  {DIM}Runtimes:{RESET}  {' · '.join(runtimes)}")
-    print(f"  {DIM}{'─' * 54}{RESET}\n")
+        print(f"  {DIM}Runtimes:{RESET}   {' · '.join(runtimes)}")
+    print(f"  {DIM}{'─' * 50}{RESET}\n")
 
-    # Header
-    print(f"  {DIM}{'Model':<24} {'Params':>6} {'Quant':>7} {'Fit':>11} {'Quality':>10} {'Speed':>10} {'Score':>7} {'t/s':>6} {'VRAM':>6}{RESET}")
-    print(f"  {DIM}{'─'*24} {'─'*6} {'─'*7} {'─'*11} {'─'*10} {'─'*10} {'─'*7} {'─'*6} {'─'*6}{RESET}")
+    print(f"  {CYAN}🏆 Top Models for '{use_case}'{RESET}\n")
 
-    for f in fits:
+    for idx, f in enumerate(fits):
         sc = f.scores
-        # Fit badge color
+        # Fit badge
         if f.fit_level.value == "comfortable":
-            fit_c, fit_l = MATRIX, "✓ comfort"
+            fit_b = f"{MATRIX}✅ Comfortably Fits{RESET}"
         elif f.fit_level.value == "tight":
-            fit_c, fit_l = PINK, "~ tight  "
+            fit_b = f"{PINK}⚠️ Tight Fit{RESET}"
         elif f.fit_level.value == "partial":
-            fit_c, fit_l = RED, "⚡ partial"
+            fit_b = f"{RED}⚡ Partial Offload{RESET}"
         else:
-            fit_c, fit_l = DIM, "✗ too big "
+            fit_b = f"{DIM}❌ Too Large{RESET}"
 
-        installed = f"{MATRIX}●{RESET}" if f.is_installed else f"{DIM}○{RESET}"
+        installed = f"{MATRIX}Installed{RESET}" if f.is_installed else f"{DIM}Not Downloaded{RESET}"
         quality_bar = _compat_bar(sc.quality, width=6)
         speed_bar = _compat_bar(sc.speed, width=6)
-        comp_color = MATRIX if sc.composite > 50 else PINK if sc.composite > 25 else DIM
+        
+        # Colorize score
+        if sc.composite > 75:
+            score_c = f"{MATRIX}{BOLD}"
+        elif sc.composite > 50:
+            score_c = f"{CYAN}{BOLD}"
+        else:
+            score_c = f"{DIM}"
 
-        print(
-            f"  {installed} {CYAN}{f.name:<22}{RESET}"
-            f"  {DIM}{f.params_b:>5.1f}B{RESET}"
-            f"  {DIM}{f.best_quant:>7}{RESET}"
-            f"  {fit_c}{fit_l}{RESET}"
-            f"  {quality_bar}"
-            f"  {speed_bar}"
-            f"  {comp_color}{sc.composite:>6.1f}{RESET}"
-            f"  {DIM}{f.estimated_tok_s:>5.0f}{RESET}"
-            f"  {DIM}{f.vram_needed_gb:>5.1f}{RESET}"
-        )
+        print(f"  {BOLD}{idx+1}. {f.name}{RESET} {DIM}({f.params_b:.1f}B, {f.best_quant}){RESET}")
+        print(f"     ⭐ {score_c}Score: {sc.composite:.1f}/100{RESET}  |  ⚡ {f.estimated_tok_s:.0f} tok/s  |  💾 {f.vram_needed_gb:.1f} GB VRAM")
+        print(f"     {fit_b}  |  {DIM}Quality:{RESET} {quality_bar}  |  {DIM}Speed:{RESET} {speed_bar}")
+        print(f"     {DIM}Status: {installed}{RESET}")
+        print()
+        time.sleep(0.02)
         time.sleep(0.02)
 
     print(f"\n  {DIM}{'─' * 54}{RESET}")
