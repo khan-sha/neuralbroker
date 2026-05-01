@@ -819,68 +819,53 @@ def setup():
         use_ollama_cloud = False
         print(f"  {DIM}Cloud skipped — local-only mode{RESET}\n")
 
-    # ── Arrow-key model multi-select (recommended pre-checked) ─────────────
-    selector = SmartModelSelector(device_key, profile.vram_gb, runnable)
+    # ── Auto-Chooser using NeuralFit Advanced Engine ───────────────────────
+    from neuralbrok.hardware_scorer import rank_models
+    
+    # Map workload name to a use case
+    use_case_map = {
+        "General Chat & Writing": "chat",
+        "Coding & Software Dev": "coding",
+        "Mathematics & Logic": "math",
+        "Vision & Multimodal": "vision",
+        "RAG & Document QA": "agentic",
+        "Mixed / All-purpose": "general",
+    }
+    target_use_case = use_case_map.get(workload_name, "general")
 
-    if runnable:
-        auto_top = selector.for_workload(workload_categories)
-        auto_indices = {i for i, m in enumerate(runnable) if m in auto_top[:4]}
+    print(f"  {PINK}◐{RESET}  Running NeuralFit Advanced Auto-Chooser for '{target_use_case}'...\r")
+    sys.stdout.flush()
 
-        total_vram_for_bar = profile.vram_gb if profile.vram_gb > 0 else 8.0
+    fits = rank_models(profile, use_case=target_use_case, max_results=4, include_too_large=False)
+    
+    ranked_models = [f for f in fits if f.fit_level.value in ("comfortable", "tight")]
 
-        def model_label_fn(m, i):
-            ev = m.vram_estimated_gb if m.vram_estimated_gb > 0 else m.vram_gb
-            tps = get_tok_per_sec(m, device_key, bandwidth=bw)
-            inst = f"{MATRIX}●{RESET}" if m.is_installed else f"{DIM}○{RESET}"
-            bar = _get_vram_bar(ev, total_vram_for_bar, width=8)
-            return f"{inst} {PINK}{m.name:<26}{RESET} {bar} {DIM}{ev:.1f}GB  {tps:.0f}t/s{RESET}"
-
-        print(f"  {DIM}★ = recommended for your workload. Space to toggle, Enter to confirm.{RESET}\n")
-        ranked_models = _arrow_multiselect(
-            runnable, model_label_fn,
-            pre_selected=auto_indices,
-            max_select=6,
-            title="MODEL SELECTION",
-        )
-        if not ranked_models:
-            ranked_models = auto_top[:4]
-            print(f"  {DIM}Nothing selected — using top-4 recommendations{RESET}\n")
-    else:
-        ranked_models = []
-
-    rec_models_names = [m.name for m in ranked_models[:4]]
-
-    # ── Step 3 — Model recommendations panel ──────────────────────────────
-    print(f"  {MAGENTA}{BOLD}▸ MODEL RECOMMENDATIONS{RESET}  {DIM}local models for your hardware + workload{RESET}")
+    print(f"  {MAGENTA}{BOLD}▸ NEURALFIT AUTO-SELECTION{RESET}  {DIM}Zero-config optimal models{RESET}")
     print(f"  {DIM}{'─' * 54}{RESET}")
-    total_vram = profile.vram_gb if profile.vram_gb > 0 else 8.0
-
+    
     if ranked_models:
-        print(f"  {DIM}  {'#':<3} {'Model':<24} {'VRAM':<18} {'Tok/s':>5}  Compat{RESET}")
-        for i, model in enumerate(ranked_models[:4]):
-            ev = model.vram_estimated_gb if model.vram_estimated_gb > 0 else model.vram_gb
-            bar = _get_vram_bar(ev, total_vram, width=10)
-            tps = get_tok_per_sec(model, device_key, bandwidth=bw)
-            score = getattr(model, "_temp_score", None)
-            compat_str = _compat_bar(score, width=6) if score is not None else f"{DIM}N/A{RESET}"
-            inst_dot = f"{MATRIX}●{RESET}" if model.is_installed else f"{DIM}○{RESET}"
-            star = f" {PINK}★{RESET}" if i == 0 else "  "
-            print(f"  {star}{DIM}{i+1}.{RESET} {inst_dot} {PINK}{model.name:<24}{RESET} {bar} {DIM}{tps:>4.0f}t/s{RESET}  {compat_str}")
-            time.sleep(0.06)
+        for idx, f in enumerate(ranked_models):
+            sc = f.scores
+            star = f" {PINK}★{RESET}" if idx == 0 else "  "
+            inst_dot = f"{MATRIX}●{RESET}" if f.is_installed else f"{DIM}○{RESET}"
+            
+            # Print user friendly card
+            print(f"  {star}{DIM}{idx+1}.{RESET} {inst_dot} {BOLD}{CYAN}{f.name}{RESET} {DIM}({f.params_b:.1f}B, {f.best_quant}){RESET}")
+            print(f"       {MATRIX}Optimal Match{RESET}  |  ⚡ {f.estimated_tok_s:.0f} tok/s  |  💾 {f.vram_needed_gb:.1f} GB VRAM")
+            print(f"       {DIM}Score:{RESET} {BOLD}{sc.composite:.1f}/100{RESET}  {DIM}(Quality: {sc.quality:.1f} · Speed: {sc.speed:.1f}){RESET}")
+            print()
+            time.sleep(0.05)
+            
+        print(f"  {DIM}● installed  ○ pending pull  ★ primary default{RESET}")
         print(f"  {DIM}{'─' * 54}{RESET}")
-        print(f"  {DIM}● installed  ○ not pulled  ★ top pick{RESET}")
+        print(f"  {MATRIX}✓{RESET} {len(ranked_models)} models automatically selected and configured!\n")
     else:
         print(f"  {RED}⚠  No local models fit in your VRAM.{RESET}")
         if not use_ollama_cloud:
             print(f"  {DIM}  Consider enabling Ollama Cloud above, or adding more VRAM.{RESET}")
+        print()
 
-    # Live Ollama library picks (newly discovered trending models)
-    if live_ollama and not ranked_models:
-        # Show top 3 from live catalog that would fit if they ran cloud
-        print(f"\n  {DIM}Latest trending models on Ollama (cloud-runnable):{RESET}")
-        for m in live_ollama[:3]:
-            print(f"  {DIM}  · {CYAN}{m.tag:<32}{RESET} {m.description[:45]}{RESET}")
-    print()
+    rec_models_names = [m.name for m in ranked_models]
 
     # ── Step 4 — Cost preview ──────────────────────────────────────────────
     cost_1m = (tdp / 1000.0) * 0.14 * (1000000 / 3600000) * 50
