@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "neuralbrok"
-version = "2.0.6"
+version = "2.0.7"
 description = "Agent orchestration platform — hardware-aware routing, MCP server, swarm intelligence, OpenAI-compatible"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -33,6 +33,7 @@ dependencies = [
     "google-cloud-aiplatform>=1.50.0",
     "psutil>=6.0.0",
     "click>=8.1.0",
+    "llmfit>=0.9.0",
 ]
 
 [project.optional-dependencies]
