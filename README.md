@@ -25,13 +25,13 @@ That's it. Point **Claude Code**, **Cursor**, or any OpenAI-compatible app at `l
 
 ---
 
-## 🌟 What's New in v2.0 (The Ruflo-Parity Expansion)
+## 🌟 What's New in v2.0
 
 ### 1. Agentic Swarms & Task Coordination
 NeuralBroker doesn't just route prompts; it routes *objectives*. The built-in `SwarmCoordinator` decomposes complex user requests into **Plan → Execute → Review** pipelines, automatically picking the best specialized local agent (Coder, Planner, Reviewer, Analyst) for each subtask.
 
-### 2. LLMFit Hardware Intelligence
-Powered by a native Python implementation of the advanced `llmfit` scoring algorithm, NeuralBroker scores models across **Quality**, **Speed**, **Fit**, and **Context** based on your exact hardware specifications (NVIDIA, Apple Silicon, AMD, or CPU). 
+### 2. NeuralFit Hardware Intelligence
+Powered by a native Python implementation of our advanced hardware scoring algorithm, NeuralBroker scores models across **Quality**, **Speed**, **Fit**, and **Context** based on your exact hardware specifications (NVIDIA, Apple Silicon, AMD, or CPU).
 *Run `neuralbrok fit` to see your live VRAM projections and tok/s estimates.*
 
 ### 3. AgentDB (Vector Memory) & ReasoningBank

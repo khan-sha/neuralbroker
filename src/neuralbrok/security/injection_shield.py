@@ -1,6 +1,6 @@
 """
 Injection Shield: Heuristic engine to detect prompt injection and jailbreaks.
-Equivalent to Ruflo's AIDefence.
+Equivalent to NeuralBroker's AIDefence.
 """
 import re
 

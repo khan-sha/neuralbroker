@@ -134,7 +134,7 @@
     }).join('');
   }
 
-  // ── Fetch: LLMFit Model Scoring ───────────────────────────────────────────
+  // ── Fetch: NeuralFit Model Scoring ───────────────────────────────────────────
   async function fetchFit() {
     const d = await api('/nb/fit?max_results=20');
     if (!d) return;

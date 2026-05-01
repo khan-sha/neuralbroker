@@ -2,7 +2,7 @@
 FastAPI application — NeuralBroker v2.0.
 
 VRAM-aware LLM routing proxy with OpenAI-compatible endpoints,
-Swarm agent orchestration, llmfit hardware-aware model scoring,
+Swarm agent orchestration, neuralfit hardware-aware model scoring,
 MCP server, and Prometheus metrics.
 """
 import json
@@ -1100,8 +1100,8 @@ async def nb_swarm_status(swarm_id: str):
 
 @app.get("/nb/fit")
 async def nb_fit(use_case: str = "general", max_results: int = 15):
-    """LLMFit-style model scoring — rank models by quality/speed/fit/context."""
-    from neuralbrok.llmfit_scorer import rank_models, detect_system_specs, model_fit_to_dict
+    """NeuralFit-style model scoring — rank models by quality/speed/fit/context."""
+    from neuralbrok.hardware_scorer import rank_models, detect_system_specs, model_fit_to_dict
     hw = detect_system_specs()
     fits = rank_models(hw, use_case=use_case, max_results=max_results)
     return {

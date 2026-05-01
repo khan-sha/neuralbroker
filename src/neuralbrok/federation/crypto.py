@@ -1,6 +1,6 @@
 """
 Zero-Trust Federation Crypto Module.
-Equivalent to Ruflo's mTLS + ed25519 identity verification.
+Equivalent to NeuralBroker's mTLS + ed25519 identity verification.
 """
 import hashlib
 import json

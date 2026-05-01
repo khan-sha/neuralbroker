@@ -1,6 +1,6 @@
 """
 Worker Daemon: Auto-triggered background tasks (Autopilot).
-Equivalent to Ruflo's loop workers.
+Equivalent to NeuralBroker's loop workers.
 """
 import asyncio
 import logging

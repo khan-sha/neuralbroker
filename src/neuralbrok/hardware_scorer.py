@@ -1,12 +1,12 @@
 """
-LLMFit-inspired composite model scoring engine.
+NeuralFit-inspired composite model scoring engine.
 
-Ports the core algorithm from llmfit-core (Rust) into Python.
+Ports the core algorithm from neuralfit-core (Rust) into Python.
 Scores models across 4 dimensions — Quality, Speed, Fit, Context —
 producing a composite score that determines the best model for
 the user's hardware and workload.
 
-Reference: https://github.com/AlexsJones/llmfit
+Reference: https://github.com/AlexsJones/neuralfit
 """
 import logging
 import math
@@ -42,7 +42,7 @@ class ScoreComponents:
 
 @dataclass
 class ModelFit:
-    """Complete model evaluation result — the llmfit output format."""
+    """Complete model evaluation result — the neuralfit output format."""
     name: str
     family: str
     params_b: float
@@ -72,7 +72,7 @@ class ScoringWeights:
 
 @dataclass
 class SystemSpecs:
-    """Hardware specification for scoring — mirrors llmfit's SystemSpecs."""
+    """Hardware specification for scoring — mirrors neuralfit's SystemSpecs."""
     cpu_cores: int = 4
     ram_gb: float = 16.0
     gpu_name: str = "Unknown"
@@ -273,7 +273,7 @@ def score_model(
     """Score a single model against hardware specs.
 
     Returns a ModelFit with multi-dimensional scores and metadata.
-    This is the core llmfit algorithm ported to Python.
+    This is the core neuralfit algorithm ported to Python.
     """
     if weights is None:
         weights = ScoringWeights()
@@ -351,7 +351,7 @@ def rank_models(
 ) -> list[ModelFit]:
     """Rank all models against hardware specs, sorted by composite score.
 
-    This is the main entry point — equivalent to `llmfit recommend`.
+    This is the main entry point — equivalent to `neuralfit recommend`.
     """
     if models is None:
         models = FALLBACK_MODELS

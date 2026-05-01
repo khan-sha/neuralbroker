@@ -1,6 +1,6 @@
 """
 Dynamic Agent Plugin Loader.
-Equivalent to Ruflo's Plugin Marketplace / 100+ agents architecture.
+Equivalent to NeuralBroker's Plugin Marketplace / 100+ agents architecture.
 """
 import yaml
 import logging

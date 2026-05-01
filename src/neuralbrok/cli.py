@@ -2348,16 +2348,26 @@ def list_cmd(url, show_all):
         print()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# v2.0 CLI Commands — Agent Orchestration + LLMFit + MCP
+# v2.0 CLI Commands — Agent Orchestration + NeuralFit + MCP
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @main.command(name="fit")
+@click.argument("mode", default="normal", required=False)
 @click.option("--use-case", "-u", default="general", help="Use case: coding, reasoning, chat, math, vision, tools, agentic")
 @click.option("--top", "-n", default=12, help="Number of models to show")
 @click.option("--json-out", is_flag=True, help="Output as JSON")
-def fit_cmd(use_case, top, json_out):
-    """Run llmfit-style hardware scan and rank models by composite score."""
-    from neuralbrok.llmfit_scorer import rank_models, detect_system_specs, model_fit_to_dict
+def fit_cmd(mode, use_case, top, json_out):
+    """Run neuralfit-style hardware scan. Use 'advanced' for full TUI."""
+    if mode == "advanced":
+        import subprocess
+        print(f"  \033[35m\033[1m▸ NEURALFIT ADVANCED\033[0m  \033[2mLaunching interactive TUI...\033[0m")
+        try:
+            subprocess.run(["llmfit"])
+        except FileNotFoundError:
+            print("  \033[31mError: 'llmfit' is not installed. Please install it first.\033[0m")
+        return
+
+    from neuralbrok.hardware_scorer import rank_models, detect_system_specs, model_fit_to_dict
 
     if not json_out:
         sys.stdout.write(f"  {PINK}◐{RESET}  Scanning hardware...\r")
@@ -2373,7 +2383,7 @@ def fit_cmd(use_case, top, json_out):
         return
 
     # Pink Matrix styled output
-    print(f"\n  {MAGENTA}{BOLD}▸ LLMFIT — MODEL SCORING{RESET}  {DIM}use_case={use_case}{RESET}")
+    print(f"\n  {MAGENTA}{BOLD}▸ NEURALFIT — MODEL SCORING{RESET}  {DIM}use_case={use_case}{RESET}")
     print(f"  {DIM}{'─' * 54}{RESET}")
     print(f"  {DIM}GPU:{RESET}       {PINK}{hw.gpu_name}{RESET}")
     print(f"  {DIM}VRAM:{RESET}      {PINK}{hw.vram_gb:.1f} GB{RESET}")

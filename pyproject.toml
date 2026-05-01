@@ -33,6 +33,7 @@ dependencies = [
     "google-cloud-aiplatform>=1.50.0",
     "psutil>=6.0.0",
     "click>=8.1.0",
+    "llmfit>=0.9.0",
 ]
 
 [project.optional-dependencies]

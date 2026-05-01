@@ -23,7 +23,7 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}, "model": {"type": "string"}, "temperature": {"type": "number"}}, "required": ["message"]}},
     {"name": "nb_route", "description": "Preview routing decision without executing.",
      "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}},
-    {"name": "nb_recommend", "description": "Get llmfit-scored model recommendations for your hardware.",
+    {"name": "nb_recommend", "description": "Get neuralfit-scored model recommendations for your hardware.",
      "inputSchema": {"type": "object", "properties": {"use_case": {"type": "string"}, "max_results": {"type": "integer"}}}},
     {"name": "nb_hardware", "description": "Get detected hardware profile.",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -41,7 +41,7 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {"task": {"type": "string"}, "agent": {"type": "string"}}, "required": ["task"]}},
     {"name": "nb_swarm_create", "description": "Create multi-agent swarm for complex objectives.",
      "inputSchema": {"type": "object", "properties": {"objective": {"type": "string"}}, "required": ["objective"]}},
-    {"name": "nb_model_fit", "description": "Run llmfit scoring on a specific model.",
+    {"name": "nb_model_fit", "description": "Run neuralfit scoring on a specific model.",
      "inputSchema": {"type": "object", "properties": {"model": {"type": "string"}, "use_case": {"type": "string"}}, "required": ["model"]}},
     {"name": "nb_model_download", "description": "Download a model via Ollama.",
      "inputSchema": {"type": "object", "properties": {"model": {"type": "string"}}, "required": ["model"]}},
@@ -79,11 +79,11 @@ async def handle_tool(name: str, args: dict) -> list[dict]:
         d = await AgentRouter().route(args["message"])
         return [{"type": "text", "text": json.dumps(agent_decision_to_dict(d), indent=2)}]
     elif name == "nb_recommend":
-        from neuralbrok.llmfit_scorer import rank_models, detect_system_specs, model_fit_to_dict
+        from neuralbrok.hardware_scorer import rank_models, detect_system_specs, model_fit_to_dict
         fits = rank_models(detect_system_specs(), use_case=args.get("use_case","general"), max_results=args.get("max_results",10))
         return [{"type": "text", "text": json.dumps([model_fit_to_dict(f) for f in fits], indent=2)}]
     elif name == "nb_hardware":
-        from neuralbrok.llmfit_scorer import detect_system_specs
+        from neuralbrok.hardware_scorer import detect_system_specs
         s = detect_system_specs()
         return [{"type": "text", "text": json.dumps({"gpu": s.gpu_name, "vram_gb": s.vram_gb, "bandwidth_gbps": s.bandwidth_gbps, "ram_gb": s.ram_gb, "cpu_cores": s.cpu_cores, "runtimes": {"ollama": s.ollama_available, "llama_cpp": s.llamacpp_available, "lm_studio": s.lmstudio_available}}, indent=2)}]
     elif name in ("nb_providers", "nb_stats", "nb_vram"):
@@ -109,7 +109,7 @@ async def handle_tool(name: str, args: dict) -> list[dict]:
         asyncio.create_task(coord.execute_swarm(swarm))
         return [{"type": "text", "text": json.dumps(swarm_to_dict(swarm), indent=2)}]
     elif name == "nb_model_fit":
-        from neuralbrok.llmfit_scorer import detect_system_specs, score_model, model_fit_to_dict
+        from neuralbrok.hardware_scorer import detect_system_specs, score_model, model_fit_to_dict
         from neuralbrok.models import FALLBACK_MODELS
         hw = detect_system_specs(); matching = [m for m in FALLBACK_MODELS if args["model"].lower() in m.name.lower()]
         if not matching: return [{"type": "text", "text": f"Model not found"}]

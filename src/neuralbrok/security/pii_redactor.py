@@ -1,6 +1,6 @@
 """
 PII Redactor: Security module to strip sensitive information before routing to untrusted backends.
-Equivalent to Ruflo's AIDefence privacy filter.
+Equivalent to NeuralBroker's AIDefence privacy filter.
 """
 import re
 

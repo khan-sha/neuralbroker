@@ -1,5 +1,5 @@
 """
-Built-in background tasks mimicking Ruflo's optimize/audit workers.
+Built-in background tasks mimicking NeuralBroker's optimize/audit workers.
 """
 import logging
 import asyncio

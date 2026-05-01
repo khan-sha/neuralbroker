@@ -1,7 +1,7 @@
 """
 Quantization-aware VRAM estimation engine.
 
-Ported from llmfit-core's quantization logic — maps quantization levels
+Ported from neuralfit-core's quantization logic — maps quantization levels
 to bits-per-weight and calculates precise memory requirements for model
 weights and KV cache at any context length.
 """
@@ -11,7 +11,7 @@ from typing import Optional
 
 # ── Quantization Levels ──────────────────────────────────────────────────────
 # Bits-per-weight for GGUF quantization formats.
-# Source: llmfit-core/src/fit.rs + ggml quantization spec
+# Source: neuralfit-core/src/fit.rs + ggml quantization spec
 
 QUANT_BPW: dict[str, float] = {
     "Q2_K":   2.63,
@@ -150,7 +150,7 @@ def full_estimate(
 ) -> QuantEstimate:
     """Full VRAM analysis for a model — determines fit level, run mode, and optimal quant.
 
-    Returns a QuantEstimate with everything needed for the llmfit-style scoring.
+    Returns a QuantEstimate with everything needed for the neuralfit-style scoring.
     """
     # Auto-select best quant if not specified
     if quant is None:

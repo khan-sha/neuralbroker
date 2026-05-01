@@ -16,7 +16,7 @@ class AgentDef:
     system_prompt: str             # System prompt injected into requests
     capabilities: list[str]        # Task categories this agent handles
     preferred_model_tags: list[str] = field(default_factory=list)  # Preferred model families
-    preferred_use_case: str = "general"  # llmfit use_case for model selection
+    preferred_use_case: str = "general"  # neuralfit use_case for model selection
     icon: str = "🤖"              # Emoji icon for dashboard
     color: str = "#ff87ff"         # CSS color for dashboard
     max_tokens: int = 8192

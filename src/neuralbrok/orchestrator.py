@@ -26,7 +26,7 @@ from typing import Optional
 import httpx
 
 from neuralbrok.agents import get_agent, list_agents, AgentDef
-from neuralbrok.llmfit_scorer import (
+from neuralbrok.hardware_scorer import (
     SystemSpecs,
     rank_models,
     detect_system_specs,
@@ -258,7 +258,7 @@ class AgentRouter:
         )
 
     def _pick_model(self, agent: AgentDef) -> str:
-        """Pick the best model for an agent using llmfit scoring."""
+        """Pick the best model for an agent using neuralfit scoring."""
         try:
             fits = rank_models(
                 hw=self.hw_specs,

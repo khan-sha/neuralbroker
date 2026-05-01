@@ -1,6 +1,6 @@
 """
 ReasoningBank: The self-learning module that stores successful swarm task trajectories.
-Equivalent to Ruflo's SONA pattern memory.
+Equivalent to NeuralBroker's SONA pattern memory.
 """
 import logging
 from neuralbrok.memory.vector_store import AgentDB
