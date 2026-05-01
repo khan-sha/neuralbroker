@@ -2338,87 +2338,108 @@ def list_cmd(url, show_all):
 
 @main.command(name="fit")
 @click.argument("mode", default="normal", required=False)
-@click.option("--use-case", "-u", default="general", help="Use case: coding, reasoning, chat, math, vision, tools, agentic")
-@click.option("--top", "-n", default=12, help="Number of models to show")
-@click.option("--json-out", is_flag=True, help="Output as JSON")
-def fit_cmd(mode, use_case, top, json_out):
-    """Run neuralfit-style hardware scan. Use 'advanced' for full TUI."""
-    from neuralbrok.hardware_scorer import rank_models, detect_system_specs, model_fit_to_dict
-
-    if not json_out:
-        sys.stdout.write(f"  {PINK}◐{RESET}  Scanning hardware...\r")
-        sys.stdout.flush()
-
-    hw = detect_system_specs()
-    fits = rank_models(hw, use_case=use_case, max_results=top, include_too_large=True)
-
-    if json_out:
-        result = {"hardware": {"gpu": hw.gpu_name, "vram_gb": hw.vram_gb, "bandwidth_gbps": hw.bandwidth_gbps},
-                  "models": [model_fit_to_dict(f) for f in fits]}
-        print(json.dumps(result, indent=2))
-        return
+@click.option("--top", "-n", default=12, help="Number of models to show (normal mode)")
+@click.option("--json-out", is_flag=True, help="Output raw JSON")
+def fit_cmd(mode, top, json_out):
+    """Scan hardware and rank models.  'advanced' opens the full interactive TUI."""
 
     if mode == "advanced":
         from neuralbrok.neuralfit_tui import run_advanced
-        run_advanced(limit=top, use_case=use_case)
+        run_advanced()
         return
 
-    # Redesigned UI
-    print(f"\n  {MAGENTA}{BOLD}✨ NEURALFIT HARDWARE INTELLIGENCE ✨{RESET}")
-    print(f"  {DIM}{'═' * 50}{RESET}")
-    
-    # Hardware Profile
-    print(f"  {CYAN}🖥️  Hardware Profile{RESET}")
-    print(f"  {DIM}GPU:{RESET}       {BOLD}{hw.gpu_name}{RESET} {PINK}({hw.vram_gb:.1f} GB VRAM){RESET}")
-    print(f"  {DIM}Bandwidth:{RESET} {hw.bandwidth_gbps:.0f} GB/s")
-    print(f"  {DIM}System RAM:{RESET} {hw.ram_gb:.0f} GB")
+    # ── fetch data from the engine ──────────────────────────────────────────
+    import subprocess as _sp, json as _json
 
-    runtimes = []
-    if hw.ollama_available: runtimes.append(f"{MATRIX}Ollama{RESET}")
-    if hw.llamacpp_available: runtimes.append(f"{MATRIX}llama.cpp{RESET}")
-    if hw.lmstudio_available: runtimes.append(f"{MATRIX}LM Studio{RESET}")
-    if hw.docker_model_runner: runtimes.append(f"{MATRIX}Docker{RESET}")
-    if runtimes:
-        print(f"  {DIM}Runtimes:{RESET}   {' · '.join(runtimes)}")
-    print(f"  {DIM}{'─' * 50}{RESET}\n")
+    sys.stdout.write(f"  {PINK}◐{RESET}  Scanning hardware & scoring models…\r")
+    sys.stdout.flush()
 
-    print(f"  {CYAN}🏆 Top Models for '{use_case}'{RESET}\n")
+    try:
+        r = _sp.run(
+            ["llmfit", "fit", "--json", "--no-dashboard"],
+            capture_output=True, text=True, timeout=30, check=True
+        )
+        data = _json.loads(r.stdout)
+    except Exception as e:
+        print(f"  {RED}Engine error: {e}{RESET}")
+        return
 
-    for idx, f in enumerate(fits):
-        sc = f.scores
-        # Fit badge
-        if f.fit_level.value == "comfortable":
-            fit_b = f"{MATRIX}✅ Comfortably Fits{RESET}"
-        elif f.fit_level.value == "tight":
-            fit_b = f"{PINK}⚠️ Tight Fit{RESET}"
-        elif f.fit_level.value == "partial":
-            fit_b = f"{RED}⚡ Partial Offload{RESET}"
-        else:
-            fit_b = f"{DIM}❌ Too Large{RESET}"
+    system = data.get("system", {})
+    models = data.get("models", [])[:top]
 
-        installed = f"{MATRIX}Installed{RESET}" if f.is_installed else f"{DIM}Not Downloaded{RESET}"
-        quality_bar = _compat_bar(sc.quality, width=6)
-        speed_bar = _compat_bar(sc.speed, width=6)
-        
-        # Colorize score
-        if sc.composite > 75:
-            score_c = f"{MATRIX}{BOLD}"
-        elif sc.composite > 50:
-            score_c = f"{CYAN}{BOLD}"
-        else:
-            score_c = f"{DIM}"
+    if json_out:
+        print(_json.dumps(data, indent=2))
+        return
 
-        print(f"  {BOLD}{idx+1}. {f.name}{RESET} {DIM}({f.params_b:.1f}B, {f.best_quant}){RESET}")
-        print(f"     ⭐ {score_c}Score: {sc.composite:.1f}/100{RESET}  |  ⚡ {f.estimated_tok_s:.0f} tok/s  |  💾 {f.vram_needed_gb:.1f} GB VRAM")
-        print(f"     {fit_b}  |  {DIM}Quality:{RESET} {quality_bar}  |  {DIM}Speed:{RESET} {speed_bar}")
-        print(f"     {DIM}Status: {installed}{RESET}")
+    # ── hardware header ──────────────────────────────────────────────────────
+    gpu   = system.get("gpu_name", "Unknown GPU")
+    vram  = system.get("gpu_vram_gb", 0)
+    ram   = system.get("total_ram_gb", 0)
+    cpu   = system.get("cpu_name", "?")
+    bk    = system.get("backend", "CPU")
+
+    print(f"\n  {PINK}{BOLD}✦ NEURALFIT{RESET}  {DIM}hardware intelligence{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    print(f"  {DIM}GPU{RESET}      {BOLD}{gpu}{RESET}  {PINK}{vram:.0f} GB VRAM{RESET}")
+    print(f"  {DIM}RAM{RESET}      {ram:.0f} GB   {DIM}CPU{RESET} {cpu[:40]}")
+    print(f"  {DIM}Backend{RESET}  {MATRIX}{bk}{RESET}")
+    print(f"  {DIM}{'─' * 54}{RESET}\n")
+
+    # ── model list ───────────────────────────────────────────────────────────
+    _FIT_COLORS = {
+        "perfect":   (MATRIX, "✅ Perfect  "),
+        "good":      (MATRIX, "✅ Good     "),
+        "too tight": (AMBER,  "⚠  Too Tight"),
+        "tight":     (AMBER,  "⚠  Tight    "),
+        "marginal":  (RED,    "⚡ Marginal  "),
+        "partial":   (RED,    "⚡ Partial   "),
+        "too_large": (DIM,    "✗  Too Large"),
+    }
+
+    print(f"  {CYAN}{BOLD}TOP {len(models)} MODELS FOR YOUR HARDWARE{RESET}\n")
+
+    for idx, m in enumerate(models):
+        sc       = m.get("score_components") or {}
+        score    = m.get("score") or 0
+        tps      = m.get("estimated_tps") or 0
+        vram_r   = m.get("memory_required_gb") or 0
+        ctx      = m.get("context_length") or 0
+        ctx_s    = f"{ctx//1000}k" if ctx >= 1000 else str(ctx)
+        prm      = m.get("parameter_count", "?")
+        quant    = m.get("best_quant", "?")
+        disk     = m.get("disk_size_gb") or 0
+        fit_key  = (m.get("fit_level") or "").strip().lower()
+        fit_c, fit_label = _FIT_COLORS.get(fit_key, (DIM, fit_key.ljust(12)))
+        inst_dot = f"{MATRIX}●{RESET}" if m.get("installed") else f"{DIM}○{RESET}"
+        name     = m.get("name", "?")
+        use      = m.get("use_case") or m.get("category") or ""
+
+        sc_c = MATRIX if score >= 85 else CYAN if score >= 70 else PINK if score >= 50 else DIM
+        qual = sc.get("quality", 0)
+        spd  = sc.get("speed", 0)
+        fit  = sc.get("fit", 0)
+
+        def _minbar(pct, w=8):
+            f = max(0, min(w, round(pct / 100 * w)))
+            return PINK + "█" * f + DIM + "░" * (w - f) + RESET
+
+        print(f"  {inst_dot} {BOLD}{idx+1}.{RESET} {CYAN}{BOLD}{name}{RESET}")
+        print(f"     {sc_c}{BOLD}{score:.0f}/100{RESET}  ⚡ {tps:.0f} tok/s  💾 {vram_r:.1f}GB VRAM  "
+              f"📄 {ctx_s} ctx  🗜 {quant}  📦 {disk:.1f}GB disk")
+        print(f"     {fit_c}{fit_label}{RESET}  "
+              f"{DIM}Quality {RESET}{_minbar(qual)}  "
+              f"{DIM}Speed {RESET}{_minbar(spd)}  "
+              f"{DIM}Fit {RESET}{_minbar(fit)}")
+        print(f"     {DIM}{use}{RESET}")
         print()
         time.sleep(0.02)
-        time.sleep(0.02)
 
-    print(f"\n  {DIM}{'─' * 54}{RESET}")
-    print(f"  {DIM}Scored {len(fits)} models · composite = quality×{PINK}0.35{RESET} + speed×{MATRIX}0.25{RESET} + fit×{CYAN}0.25{RESET} + ctx×{DIM}0.15{RESET}")
-    print()
+    total = len(data.get("models", []))
+    print(f"  {DIM}{'─' * 54}{RESET}")
+    print(f"  {DIM}Showing {len(models)} of {total} models  ·  "
+          f"run 'neuralbrok fit advanced' for full interactive TUI{RESET}\n")
+
+
 
 
 @main.command(name="mcp")
