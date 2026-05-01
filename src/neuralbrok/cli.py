@@ -2358,15 +2358,6 @@ def list_cmd(url, show_all):
 @click.option("--json-out", is_flag=True, help="Output as JSON")
 def fit_cmd(mode, use_case, top, json_out):
     """Run neuralfit-style hardware scan. Use 'advanced' for full TUI."""
-    if mode == "advanced":
-        import subprocess
-        print(f"  \033[35m\033[1m▸ NEURALFIT ADVANCED\033[0m  \033[2mLaunching interactive TUI...\033[0m")
-        try:
-            subprocess.run(["llmfit"])
-        except FileNotFoundError:
-            print("  \033[31mError: 'llmfit' is not installed. Please install it first.\033[0m")
-        return
-
     from neuralbrok.hardware_scorer import rank_models, detect_system_specs, model_fit_to_dict
 
     if not json_out:
@@ -2380,6 +2371,44 @@ def fit_cmd(mode, use_case, top, json_out):
         result = {"hardware": {"gpu": hw.gpu_name, "vram_gb": hw.vram_gb, "bandwidth_gbps": hw.bandwidth_gbps},
                   "models": [model_fit_to_dict(f) for f in fits]}
         print(json.dumps(result, indent=2))
+        return
+
+    if mode == "advanced":
+        print(f"\n  {MAGENTA}{BOLD}⌬ NEURALFIT ADVANCED TELEMETRY ⌬{RESET}")
+        print(f"  {DIM}{'═' * 70}{RESET}")
+        print(f"  {CYAN}SYSTEM DIAGNOSTICS{RESET}")
+        print(f"  {DIM}GPU Architecture:{RESET} {BOLD}{hw.gpu_name}{RESET}")
+        print(f"  {DIM}Total VRAM Capacity:{RESET} {PINK}{hw.vram_gb:.2f} GB{RESET}  |  {DIM}Memory Bandwidth:{RESET} {MATRIX}{hw.bandwidth_gbps:.0f} GB/s{RESET}")
+        print(f"  {DIM}System Memory (RAM):{RESET} {hw.ram_gb:.1f} GB")
+        print(f"  {DIM}{'─' * 70}{RESET}\n")
+        
+        print(f"  {CYAN}DETAILED MODEL PROFILES{RESET} {DIM}(Top {top} results){RESET}\n")
+        
+        for idx, f in enumerate(fits):
+            sc = f.scores
+            
+            # Deep breakdown
+            if f.fit_level.value == "comfortable":
+                fit_b = f"{MATRIX}Optimal Match (100% Offload){RESET}"
+            elif f.fit_level.value == "tight":
+                fit_b = f"{PINK}Near Capacity (95%+ VRAM){RESET}"
+            elif f.fit_level.value == "partial":
+                fit_b = f"{RED}Partial Offload (CPU Spilling){RESET}"
+            else:
+                fit_b = f"{DIM}Exceeds Hardware Limits{RESET}"
+                
+            score_color = MATRIX if sc.composite > 75 else CYAN if sc.composite > 50 else DIM
+            
+            print(f"  {score_color}┌── {BOLD}{idx+1}. {f.name}{RESET} {DIM}[{f.params_b:.1f}B Parameters]{RESET}")
+            print(f"  {score_color}│{RESET}  {DIM}Precision:{RESET} {f.best_quant:<8}  {DIM}Context Window:{RESET} {f.context_length} tokens")
+            print(f"  {score_color}│{RESET}  {DIM}VRAM Required:{RESET} {PINK}{f.vram_needed_gb:.2f} GB{RESET}  ({fit_b})")
+            print(f"  {score_color}│{RESET}  {DIM}Estimated Throughput:{RESET} {CYAN}{f.estimated_tok_s:.0f} tokens/second{RESET}")
+            print(f"  {score_color}│{RESET}  {DIM}Score Matrix:{RESET} Composite {BOLD}{score_color}{sc.composite:.1f}/100{RESET}")
+            print(f"  {score_color}│{RESET}                Quality: {sc.quality:.1f}  Speed: {sc.speed:.1f}  Fit: {sc.fit:.1f}")
+            print(f"  {score_color}└──{RESET}\n")
+            time.sleep(0.01)
+            
+        print(f"  {DIM}Run `neuralbrok fit` for the standard summary view.{RESET}\n")
         return
 
     # Redesigned UI
