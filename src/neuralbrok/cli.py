@@ -2359,58 +2359,8 @@ def fit_cmd(mode, use_case, top, json_out):
         return
 
     if mode == "advanced":
-        import subprocess
-        import json as _json
-        print(f"  {PINK}◐{RESET}  Running NeuralFit Advanced Engine (compiled)...\r")
-        sys.stdout.flush()
-        try:
-            result = subprocess.run(["llmfit", "fit", "--json", "-n", str(top)], capture_output=True, text=True, check=True)
-            data = _json.loads(result.stdout)
-        except Exception as e:
-            print(f"  {RED}Error running NeuralFit Advanced Engine: {e}{RESET}")
-            return
-            
-        system = data.get("system", {})
-        models = data.get("models", [])
-        
-        print(f"\n  {MAGENTA}{BOLD}⌬ NEURALFIT ADVANCED TELEMETRY ⌬{RESET}")
-        print(f"  {DIM}{'═' * 70}{RESET}")
-        print(f"  {CYAN}SYSTEM DIAGNOSTICS (Native Engine){RESET}")
-        # The JSON format for system isn't perfectly identical to hardware_scorer but let's fall back to hw if missing
-        print(f"  {DIM}GPU Architecture:{RESET} {BOLD}{hw.gpu_name}{RESET}")
-        print(f"  {DIM}Total VRAM Capacity:{RESET} {PINK}{hw.vram_gb:.2f} GB{RESET}  |  {DIM}Memory Bandwidth:{RESET} {MATRIX}{hw.bandwidth_gbps:.0f} GB/s{RESET}")
-        print(f"  {DIM}System Memory (RAM):{RESET} {hw.ram_gb:.1f} GB")
-        print(f"  {DIM}{'─' * 70}{RESET}\n")
-        
-        print(f"  {CYAN}DETAILED MODEL PROFILES{RESET} {DIM}(Top {top} results){RESET}\n")
-        
-        for idx, m in enumerate(models):
-            sc = m.get("score_components", {})
-            fit_lvl = m.get("fit_level", "Unknown")
-            
-            if "Good" in fit_lvl or "Comfortable" in fit_lvl:
-                fit_b = f"{MATRIX}Optimal Match (100% Offload){RESET}"
-            elif "Tight" in fit_lvl:
-                fit_b = f"{PINK}Near Capacity (95%+ VRAM){RESET}"
-            elif "Partial" in fit_lvl:
-                fit_b = f"{RED}Partial Offload (CPU Spilling){RESET}"
-            else:
-                fit_b = f"{DIM}Exceeds Hardware Limits{RESET}"
-                
-            composite = m.get("score", 0.0)
-            score_color = MATRIX if composite > 75 else CYAN if composite > 50 else DIM
-            params = m.get("params_b", 0.0)
-            
-            print(f"  {score_color}┌── {BOLD}{idx+1}. {m.get('name')}{RESET} {DIM}[{params:.1f}B Parameters]{RESET}")
-            print(f"  {score_color}│{RESET}  {DIM}Precision:{RESET} {m.get('best_quant', 'Unknown'):<8}  {DIM}Context Window:{RESET} {m.get('context_length', 'Unknown')} tokens")
-            print(f"  {score_color}│{RESET}  {DIM}VRAM Required:{RESET} {PINK}{m.get('memory_required_gb', 0.0):.2f} GB{RESET}  ({fit_b})")
-            print(f"  {score_color}│{RESET}  {DIM}Estimated Throughput:{RESET} {CYAN}{m.get('estimated_tps', 0):.0f} tokens/second{RESET}")
-            print(f"  {score_color}│{RESET}  {DIM}Score Matrix:{RESET} Composite {BOLD}{score_color}{composite:.1f}/100{RESET}")
-            print(f"  {score_color}│{RESET}                Quality: {sc.get('quality', 0):.1f}  Speed: {sc.get('speed', 0):.1f}  Fit: {sc.get('fit', 0):.1f}")
-            print(f"  {score_color}└──{RESET}\n")
-            time.sleep(0.01)
-            
-        print(f"  {DIM}Powered by Advanced Core. Run `neuralbrok fit` for the standard summary view.{RESET}\n")
+        from neuralbrok.neuralfit_tui import run_advanced
+        run_advanced(limit=top, use_case=use_case)
         return
 
     # Redesigned UI
